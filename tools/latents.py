@@ -390,65 +390,75 @@ def hide_node(g, H):
     """
     Removes a node H from graph g, recalculating edges (and weights) 
     while ensuring logical handling of loops and paths.
-
+    If H has no parents but does have children, induce new edges among its children.
+    
     :param g: input graph (dictionary)
     :param H: node to hide
     :return: the updated graph with H removed
     """
-    # Make a local copy so we don’t mutate the original
+    from copy import deepcopy
     gg = deepcopy(g)
-
+    
     if H not in g:
         raise KeyError(f"Node {H} not found in graph.")
-
+    
     # Get children and parents of the node to be hidden
     ch = children(g, H)  # e.g. { child_node: child_lags }
     pa = parents(g, H)   # e.g. { parent_node: parent_lags }
-
+    
     # Check if H has a self-loop
     if H in g[H]:
         sl = g[H][H][1]  # e.g. {10} for a self-loop of length 10
     else:
         sl = set()
-
+    
     # Remove the node H from gg
-    remove_node(gg, H)   # your existing function that deletes H and edges to/from it
-
-    # For each parent p of H, for each child c of H, 
-    # merge the old p->H, H->c, plus any self-loop on H, plus any existing p->c edge
-    for p in pa:
-        for c in ch:
-            # 1) The existing p->c edge-lag set (if any)
-            if c in gg[p]:
-                ab = gg[p][c].get(1, set())
-            else:
-                ab = set()
-
-            # 2) parent->H lag set
-            pa_weights = pa[p] if pa[p] else set()
-
-            # 3) H->child c lag set
-            ch_weights = ch[c] if c in ch else set()
-
-            # 4) self-loop on H
-            sl_weights = sl if sl else set()
-
-            # Merge them
-            print(f"For parent={p}, child={c}: ab={ab}, ah={pa_weights}, hb={ch_weights}, sl={sl_weights}")
-            if c == H or p == H:
-                continue
-            w = merge_weightsets(ab, pa_weights, ch_weights, sl_weights)
-            #  e.g. merges all sets, or yields an infinite expression for loops
-
-            # Insert the new edge-lag set for p->c
-            # ensure gg[p][c] = {1: w}
-            if p not in gg:
-                gg[p] = {}
-            if c not in gg[p]:
-                gg[p][c] = {}
-            gg[p][c][1] = w
+    remove_node(gg, H)   # deletes H and all its incident edges
+    
+    # If H has parents, do the usual merging.
+    if pa:
+        for p in pa:
+            for c in ch:
+                # 1) Existing p->c edge-lag set (if any)
+                ab = gg[p][c].get(1, set()) if c in gg[p] else set()
+                # 2) parent's p->H lag set
+                pa_weights = pa[p] if pa[p] else set()
+                # 3) H->child c lag set
+                ch_weights = ch[c] if c in ch else set()
+                # 4) self-loop on H
+                sl_weights = sl if sl else set()
+                print(f"For parent={p}, child={c}: ab={ab}, ah={pa_weights}, hb={ch_weights}, sl={sl_weights}")
+                if c == H or p == H:
+                    continue
+                w = merge_weightsets(ab, pa_weights, ch_weights, sl_weights)
+                if p not in gg:
+                    gg[p] = {}
+                if c not in gg[p]:
+                    gg[p][c] = {}
+                gg[p][c][1] = w
+    else:
+        # If H has no parents (i.e., H is a source) but has children,
+        # then for every pair of distinct children, create an induced edge.
+        if ch:
+            children_list = list(ch.keys())
+            for i in range(len(children_list)):
+                for j in range(i+1, len(children_list)):
+                    c1 = children_list[i]
+                    c2 = children_list[j]
+                    # For induced edges among children, we merge the lag sets from H->c1 and H->c2, plus any self-loop on H.
+                    lag_c1 = ch[c1] if c1 in ch else set()
+                    lag_c2 = ch[c2] if c2 in ch else set()
+                    w = merge_weightsets(set(), lag_c1, lag_c2, sl)
+                    # Insert induced edges in both directions.
+                    for (u, v) in [(c1, c2), (c2, c1)]:
+                        if u not in gg:
+                            gg[u] = {}
+                        if v not in gg[u]:
+                            gg[u][v] = {}
+                        gg[u][v][1] = w
+    # Clean up any remaining references to H.
     for parent in list(gg.keys()):
-        gg[parent].pop(H, None)  # Remove references to H in parents
+        gg[parent].pop(H, None)
     gg.pop(H, None)
     return gg
 

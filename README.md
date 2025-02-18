@@ -74,14 +74,13 @@ The graph after marginalizing latent vertices.
 The induced PathForest for a specific edge, with its normalized PathTree, overall delay expression, and alpha labels.
 Example
 Consider a simple graph:
-
-python
-
+```bash
 graph = {
     1: {2: {1: {1}}},
     2: {2: {1: {1}}, 3: {1: {1}}},
     3: {}
 }
+```
 After hiding vertex 2, the edge from 1 to 3 might be represented by a PathTree with:
 
 A root preset of 2 (cycle‑free/base delay).

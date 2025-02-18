@@ -60,11 +60,12 @@ Tools to explore dynamic causal graphs in the case of undersampled data, helping
 
     # On Windows (Command Prompt):
     venv\Scripts\activate
-    Install the required packages:
 
-bash
+3. **Install** the required packages:
 
-pip install -r requirements.txt
+   ```bash
+
+    pip install -r requirements.txt
 Requirements typically include OR‑Tools, Sympy, Numpy, and SortedContainers.
 
 Usage

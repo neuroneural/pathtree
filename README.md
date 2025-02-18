@@ -71,9 +71,9 @@ Requirements typically include OR‑Tools, Sympy, Numpy, and SortedContainers.
 Usage
 Run the test cases to see how the framework converts graphs into PathForests, refines PathTrees, and computes symbolic delay expressions:
 
-bash
+    ```bash
 
-python tests_selim.py
+    python tests_selim.py
 A typical test run will show:
 
 The original graph.

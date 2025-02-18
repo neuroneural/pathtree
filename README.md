@@ -49,3 +49,52 @@ Tools to explore dynamic causal graphs in the case of undersampled data, helping
    ```bash
    git clone https://github.com/neuroneural/pathtree.git
    cd pathtree
+2. **Create and activate** a Python virtual environment (optional but recommended):
+
+bash
+Copy
+Edit
+# Create a new virtual environment in a folder named "venv"
+python -m venv venv
+
+# Activate it on Linux/macOS
+source venv/bin/activate
+
+# On Windows (Command Prompt):
+venv\Scripts\activate
+Install the required packages:
+
+bash
+Copy
+Edit
+pip install -r requirements.txt
+Requirements typically include OR‑Tools, Sympy, Numpy, and SortedContainers.
+
+Usage
+Run the test cases to see how the framework converts graphs into PathForests, refines PathTrees, and computes symbolic delay expressions:
+
+bash
+Copy
+Edit
+python tests_selim.py
+A typical test run will show:
+
+The original graph.
+The graph after marginalizing latent vertices.
+The induced PathForest for a specific edge, with its normalized PathTree, overall delay expression, and alpha labels.
+Example
+Consider a simple graph:
+
+python
+Copy
+Edit
+graph = {
+    1: {2: {1: {1}}},
+    2: {2: {1: {1}}, 3: {1: {1}}},
+    3: {}
+}
+After hiding vertex 2, the edge from 1 to 3 might be represented by a PathTree with:
+
+A root preset of 2 (cycle‑free/base delay).
+A child node representing a cycle contribution of 1*a (symbolic).
+The overall delay expression then becomes a + 2.

@@ -2,7 +2,7 @@
 
 Tools to explore dynamic causal graphs in the case of undersampled data, helping to unfold the apparent structure into the underlying truth.  
 
-**Based on gunfolds** — a framework for latent variable dynamic causality via PathTrees.
+**Based on gunfolds** — a framework for latent variable dynamic causality.
 
 ---
 

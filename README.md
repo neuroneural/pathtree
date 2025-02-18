@@ -6,15 +6,6 @@ Tools to explore dynamic causal graphs in the case of undersampled data, helping
 
 ---
 
-## Dependencies
-
-1. **igraph**  
-2. **LaTeX** with TikZ (and `pdflatex`)  
-3. **scipy**  
-4. **networkx**  
-
----
-
 ## Gunfolds: Latent Variable Dynamic Causality via PathTrees
 
 `gunfolds` (the underlying approach) is a Python project that implements a framework for **dynamic causal inference** in graphs with latent variables. The approach transforms a given graph into a set of **PathForests** (collections of **PathTrees**), which represent edge‑lag sets and the cycle structure underlying observed delays. This enables marginalizing over latent nodes and obtaining a **normalized, symbolic representation** of causal dynamics.

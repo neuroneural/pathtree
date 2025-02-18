@@ -68,7 +68,7 @@ Tools to explore dynamic causal graphs in the case of undersampled data, helping
     pip install -r requirements.txt
 Requirements typically include OR‑Tools, Sympy, Numpy, and SortedContainers.
 
-#Usage
+## Usage
 Run the test cases to see how the framework converts graphs into PathForests, refines PathTrees, and computes symbolic delay expressions:
 
    ```bash

@@ -1,107 +1,60 @@
-gunfolds
-========
+# pathtree
 
-Tools to explore dynamic causal graphs in the case of  undersampled data helping to unfold the apparent structure into the underlying truth.
+Tools to explore dynamic causal graphs in the case of undersampled data, helping to unfold the apparent structure into the underlying truth.  
 
-## dependencies ##
+**Based on gunfolds** — a framework for latent variable dynamic causality via PathTrees.
 
-1. igraph
-2. latex with tikz and pdflatex
-3. scipy
-4. networkx
-Gunfolds: Latent Variable Dynamic Causality via PathTrees
-Gunfolds is a Python project that implements a framework for dynamic causal inference in graphs with latent variables. In our approach, we transform a given graph into a set of PathForests (collections of PathTrees), which represent edge‑lag sets and the cycle structure underlying the observed delays. This enables us to marginalize over latent nodes and obtain a normalized, symbolic representation of the causal dynamics.
+---
 
-Overview
-PathTrees & PathForests:
-Each edge delay is modeled as a PathTree. A PathTree node is defined as a triple (l, α, T) where:
+## Dependencies
 
-l (preset): Represents the constant, cycle‑free delay (base delay).
-α (label): An alpha label assigned based on the node's local cycle structure.
-T (children): Represents the cycle contributions (if any) as child nodes.
-A collection of PathTrees for a given edge forms a PathForest.
+1. **igraph**  
+2. **LaTeX** with TikZ (and `pdflatex`)  
+3. **scipy**  
+4. **networkx**  
 
-Latent Marginalization:
-The project implements procedures to "hide" (marginalize) latent vertices in the original graph. The resulting graph has new edges whose delay information is represented by refined PathForests. Our implementation separates the cycle‑free (base) delay from the cyclic (child) delay contributions.
+---
 
-Symbolic Delay Expressions:
-Using Sympy and OR‑Tools, we compute overall delay expressions symbolically. This helps to compare delays across edges and supports dynamic causality analysis.
+## Gunfolds: Latent Variable Dynamic Causality via PathTrees
 
-Features
-Graph to PathForest Transformation:
-Convert an input graph (with edge‑lag sets) into a normalized representation by marginalizing latent nodes.
+`gunfolds` (the underlying approach) is a Python project that implements a framework for **dynamic causal inference** in graphs with latent variables. The approach transforms a given graph into a set of **PathForests** (collections of **PathTrees**), which represent edge‑lag sets and the cycle structure underlying observed delays. This enables marginalizing over latent nodes and obtaining a **normalized, symbolic representation** of causal dynamics.
 
-PathTree Construction and Refinement:
-Build and refine PathTrees using a Batch PTS algorithm. The algorithm only extends a tree when an observed candidate delay is missing.
+### Overview
 
-Alpha Label Assignment:
-Nodes in a PathTree are assigned alpha labels based on their local cycle structure to facilitate equivalence checking.
+- **PathTrees & PathForests**  
+  Each edge delay is modeled as a **PathTree**. A PathTree node is defined as a triple `(l, α, T)` where:
+  - `l` *(preset)*: Represents the constant, cycle‑free delay (base delay).
+  - `α` *(label)*: An alpha label assigned based on the node’s local cycle structure.
+  - `T` *(children)*: Represents the cycle contributions (if any) as child nodes.  
+  A collection of PathTrees for a given edge forms a **PathForest**.
 
-Symbolic Delay Computation:
-Overall delay expressions are computed symbolically, separating constant (cycle‑free) delay from cyclic contributions.
+- **Latent Marginalization**  
+  The project implements procedures to “hide” (marginalize) latent vertices in the original graph. The resulting graph has new edges whose delay information is represented by refined PathForests, separating cycle‑free (base) delay from cyclic (child) delay contributions.
 
-Installation
-Clone the repository:
+- **Symbolic Delay Expressions**  
+  Using **Sympy** and **OR‑Tools**, we compute overall delay expressions symbolically. This helps compare delays across edges and supports dynamic causality analysis.
 
-bash
-Copy
-git clone https://github.com/yourusername/gunfolds.git
-cd gunfolds
-Create and activate a Python virtual environment (optional but recommended):
+---
 
-bash
-Copy
-python -m venv venv
-source venv/bin/activate  # on Windows use: venv\Scripts\activate
-Install the required packages:
+## Features
 
-bash
-Copy
-pip install -r requirements.txt
-Requirements include OR‑Tools, Sympy, Numpy, and SortedContainers.
+- **Graph to PathForest Transformation**  
+  Convert an input graph (with edge‑lag sets) into a normalized representation by marginalizing latent nodes.
 
-Usage
-You can run the test cases to see how the framework converts graphs into PathForests, refines PathTrees, and computes symbolic delay expressions. For example:
+- **PathTree Construction and Refinement**  
+  Build and refine PathTrees using a Batch PTS algorithm; only extend a tree when an observed candidate delay is missing.
 
-bash
-Copy
-python tests_selim.py
-A typical test output will show:
+- **Alpha Label Assignment**  
+  Assign alpha labels to nodes in a PathTree based on local cycle structure, facilitating equivalence checking.
 
-The original graph.
-The graph after marginalizing latent vertices.
-The induced PathForest for a specific edge, along with its normalized PathTree, overall delay expression, and alpha labels.
-Example
-For instance, given a simple graph:
+- **Symbolic Delay Computation**  
+  Compute overall delay expressions symbolically, separating constant (cycle‑free) delay from cyclic contributions.
 
-python
-Copy
-graph = {
-    1: {2: {1: {1}}},
-    2: {2: {1: {1}}, 3: {1: {1}}},
-    3: {}
-}
-After hiding vertex 2, the edge from 1 to 3 might be represented by a PathTree with a root preset of 2 (cycle‑free delay) and a child node representing a cycle contributing 1*a (symbolically). The overall delay expression will then be a + 2.
+---
 
-Testing
-Run the provided tests in tests_selim.py to check the following:
+## Installation
 
-Graph → PathForest: Convert a graph to a normalized PathForest.
-PathTree → Graph: Update the graph's edge‑lag set from a refined PathTree.
-Edge‑lag list → PathTree: Build a PathTree from observed edge‑lag values.
-PathTree → Edge‑lag list: Enumerate delay values generated by a PathTree.
-What’s Next
-Additional Testing:
-Continue to test for edge cases (complex graphs, various edge‑lag sets, etc.) to ensure the normalization and marginalization produce correct PathForests.
-
-Bug Fixes & Improvements:
-Further refine the candidate extension logic and address any remaining OR‑Tools constraint issues.
-
-Documentation & Tutorials:
-Provide more detailed documentation and examples to help users understand how to use the framework.
-
-Contributing
-Contributions, bug reports, and suggestions are welcome. Please open an issue or submit a pull request.
-
-License
-This project is licensed under the MIT License.
+1. **Clone** the repository:
+   ```bash
+   git clone https://github.com/neuroneural/pathtree.git
+   cd pathtree

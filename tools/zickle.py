@@ -7,7 +7,9 @@ objects to and from the disk.
 __author__ = "Bill McNeill <billmcn@speakeasy.net>"
 __version__ = "1.0"
 
-import cPickle
+import sys
+import os.path
+import pickle
 import gzip
 
 def save(object, filename, protocol = -1):
@@ -15,28 +17,25 @@ def save(object, filename, protocol = -1):
        Works well with huge objects.
     """
     with gzip.GzipFile(filename, 'wb') as file:
-        cPickle.dump(object, file, protocol)
+        pickle.dump(object, file, protocol)
 
 def load(filename):
     """Loads a compressed object from disk
     """
     with gzip.GzipFile(filename, 'rb') as file:
-        object = cPickle.load(file)
+        object = pickle.load(file)
     return object
 
+class Object:
+    x = 7
+    y = "This is an object."
+
 if __name__ == "__main__":
-	import sys
-	import os.path
-	
-	class Object:
-		x = 7
-		y = "This is an object."
-	
-	filename = sys.argv[1]
-	if os.path.isfile(filename):
-		o = load(filename)
-		print "Loaded %s" % o
-	else:
-		o = Object()
-		save(o, filename)
-		print "Saved %s" % o
+    filename = sys.argv[1]
+    if os.path.isfile(filename):
+        o = load(filename)
+        print(f"Loaded {o}")
+    else:
+        o = Object()
+        save(o, filename)
+        print(f"Saved {o}")

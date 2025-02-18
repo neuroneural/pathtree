@@ -54,13 +54,7 @@ def try_next_double_edge(g_de, g_one_star_de, stack_de):
                 in_all_accept = True
         if (not in_all_accept):
             all_acceptable.append(deepcopy(g_one_star_de))
-            print "Added 1."
-#print g_one_star_de
-#if g_one_star_de not in all_acceptable:
-#all_acceptable.append(g_one_star_de)
-        #print "G2 --------------------------"
-        #print find_next_graph(g_one_star_de) == g_de
-        #print "End-------------------------"
+            print("Added 1.")
 
 
 def sample_g_double_edge(g_de, g_one_star_de):
@@ -114,6 +108,6 @@ def main(gStart):
     all_acceptable = []
     g_one_star = {}
     for i in gStart:
-        g_one_star[i] = {};
+        g_one_star[i] = {}
     sample_g_single_edge(gStart, g_one_star)
     return all_acceptable

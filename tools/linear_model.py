@@ -90,27 +90,27 @@ def VARbic(nllf, K, T):
     return 2*nllf + K*np.log(T)
 
 def listplace(l, a, b):
-    return [listplace(x,a,b) if not np.isscalar(x) else b if x != a  else x for x in l]
+    return [[b if x != a else x for x in row] if isinstance(row, list) else b if x != a else x for row in l]
 
 # -------------------------------------------------------------------
 # data generation
 # -------------------------------------------------------------------
 
 def randweights(n, c=0.1, factor=9):
-    rw = scipy.random.randn(n)
-    idx = scipy.where(abs(rw) < factor*c)
-    if idx:
-        rw[idx] = rw[idx]+scipy.sign(rw[idx])*c*factor
+    rw = np.random.randn(n)
+    idx = np.where(abs(rw) < factor * c)
+    if idx[0].size > 0:
+        rw[idx] += np.sign(rw[idx]) * c * factor
     return rw
 
 def transitionMatrix(cg, minstrength=0.1):
     A = gk.CG2adj(cg)
-    edges = scipy.where(A==1)
+    edges = np.where(A==1)
     A[edges] = randweights(edges[0].shape[0], c=minstrength)
     l = linalg.eig(A)[0]
     c = 0
     pbar = ProgressBar(widgets=['Searching for weights: ', Percentage(), ' '], maxval=10000).start()
-    while max(l*scipy.conj(l)) > 1:
+    while max(l*np.conj(l)) > 1:
         A[edges] = randweights(edges[0].shape[0], c=c)
         c += 1
         l = linalg.eig(A)[0]
@@ -126,7 +126,7 @@ def sampleWeights(n, minstrength=0.1):
 
 def transitionMatrix2(cg, minstrength=0.1):
     A = gk.CG2adj(cg)
-    edges = scipy.where(A==1)
+    edges = np.where(A==1)
     A[edges] = sampleWeights(edges[0].shape[0], minstrength=minstrength)
     l = linalg.eig(A)[0]
     c = 0
@@ -143,7 +143,7 @@ def transitionMatrix2(cg, minstrength=0.1):
 
 def transitionMatrix3(cg, x0=None, minstrength=0.1):
     A = gk.CG2adj(cg)
-    edges = scipy.where(A==1)
+    edges = np.where(A==1)
 
     try:
         s = x0.shape
@@ -264,8 +264,8 @@ def getAgraph(n, mp=2, st=0.5, verbose=True):
             keeptrying = False
         except ValueError as e:
             if verbose:
-                print "!!! Unable to find strong links for a stable matrix !!!"
-                print "*** trying a different graph"
+                print("!!! Unable to find strong links for a stable matrix !!!")
+                print("*** trying a different graph")
     return {'graph':      G,
             'transition': A,
             'converges':  len(bfutils.call_undersamples(G))}
@@ -284,8 +284,8 @@ def getAring(n, density=0.1, st=0.5, verbose=True, dist='flatsigned', permute=Fa
                 keeptrying = True
         except ValueError:
             if verbose:
-                print "!!! Unable to find strong links for a stable matrix !!!"
-                print "*** trying a different graph"
+                print("!!! Unable to find strong links for a stable matrix !!!")
+                print("*** trying a different graph")
     return {'graph':      G,
             'transition': A,
             'converges':  len(bfutils.call_undersamples(G))}
@@ -301,7 +301,7 @@ def scoreAGraph(G, data, x0 = None):
     n = len(G)
     a_idx = np.where(A != 0)
     b_idx = np.where(B != 0)
-    K = scipy.sum(len(a_idx[0])+len(b_idx[0])/2)
+    K = np.sum(len(a_idx[0])+len(b_idx[0])/2)
 
     if x0:
         o = optimize.fmin_bfgs(nllf, x0, args=(A, B, data, a_idx, b_idx),
@@ -325,7 +325,7 @@ def scoreAGraph2(G, data, x0 = None):
     XX = np.dot(data[:,:-1],data[:,:-1].T)
     YX = np.dot(data[:,1:],data[:,:-1].T)
 
-    K = scipy.sum(len(a_idx[0])+len(b_idx[0])/2)
+    K = scnpipy.sum(len(a_idx[0])+len(b_idx[0])/2)
 
     if x0:
         o = optimize.fmin_bfgs(nllf2, x0,
@@ -344,7 +344,7 @@ def scoreAGraph2(G, data, x0 = None):
 
 def estimateG(G,YY,XX,YX,T,x0=None):
     A,B = npG2SVAR(G)
-    K = scipy.sum(abs(A)+abs(B))
+    K = np.sum(abs(A)+abs(B))
     a_idx = np.where(A != 0)
     b_idx = np.where(B != 0)
     try:

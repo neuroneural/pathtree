@@ -1,5 +1,4 @@
 import scipy
-from numpy.lib.arraysetops import intersect1d
 from itertools import combinations
 from testgraphs import *
 
@@ -70,16 +69,16 @@ def bfs_print_tree(tree,r):
     """
     Q = []
     idx = 1
-    print str(idx)+': '+r
+    print(str(idx)+': '+r)
     Q.extend(tree[r])
     while Q:
         idx += 1
-        print str(idx)+':',
+        print(str(idx)+':')
         for u in range(0,len(Q)):
             e = Q.pop(0)
-            print e,
+            print(e),
             Q.extend(tree[e])
-        print ''
+        print('')
 
 def bfs_dict(tree,r):
     """
@@ -93,7 +92,7 @@ def bfs_dict(tree,r):
         D[idx] = []
         for u in D[idx-1]: D[idx].extend(tree[u])
     D.pop(idx) # the last dictionary element is empty - must go
-    for idx in D: print str(idx)+': '+' '.join(D[idx])
+    for idx in D: print(str(idx)+': '+' '.join(D[idx]))
 
 
 def cloneBfree(G):
@@ -118,7 +117,10 @@ def clrbi(G):
         for e in d:
             G[v].pop(e)
 
-def ecj(G,s,sccs=set()):           # elementary circuit by Johnson
+def ecj(G: dict, s: str, sccs: set = set()) -> set:
+    """
+    Find elementary circuits in a graph using Johnson's algorithm.
+    """
     blocked = {v:False for v in G} # unblock all
     B = {v:[] for v in G}
     stack = []
@@ -127,6 +129,7 @@ def ecj(G,s,sccs=set()):           # elementary circuit by Johnson
         for w in B[u]:
             B[u].remove(w)
             if blocked[w]: unblock(w)
+
     def circuit(v, stack):
         f = False
         stack.append(v)
@@ -166,8 +169,8 @@ def ecj_loops(G,s,sl=set()):           # elementary circuit by Johnson
         for u in G[v]:
             if u == s:
                 f = True
-                #print scipy.sort(stack)
-                sl.add(tuple(scipy.sort(stack)))
+                #print np.sort(stack)
+                sl.add(tuple(np.sort(stack)))
             elif not blocked[u]:
                 if circuit(u, stack):
                     f = True
@@ -193,9 +196,9 @@ def listgcd(l):
         return 0
 def lcm(a, b): return a*b/gcd(a,b)
 def chmatch(n,m,delta):
-    m,n = scipy.sort([n,m])
-    sq = scipy.mod(range(n,lcm(n,m)+1,n),m)
-    return scipy.mod(delta,m) in sq
+    m,n = np.sort([n,m])
+    sq = np.mod(range(n,lcm(n,m)+1,n),m)
+    return np.mod(delta,m) in sq
 
 def reachable(s, G, g):
     S, Q = set(), []
@@ -212,7 +215,7 @@ def allpaths(G, s, g, S=[]):
     if S is None: S = []
     S.append(s)
     if s == g:
-        print S
+        print(S)
     else:
         for u in G[s]:
             if u in S: continue
@@ -233,16 +236,16 @@ def lz_ecj(G,s,sccs=set()):           # elementary circuit by Johnson
         blocked[v] = True
         for u in G[v]:
             if u == s:
-                print 'bottom'
+                print('bottom')
                 unblock(v)
                 yield len(stack)
             elif not blocked[u]:
-                print 'recurse'
+                print('recurse')
                 for x in circuit(u, stack):
                     unblock(v)
                     yield x
             else:
-                print 'unmet'
+                print('unmet')
                 for w in G[v]: B[w].add(v)
         stack.pop()
 #    circuit(s,stack)
@@ -324,9 +327,9 @@ def d_biegde(G,a,b,d):
                 return True
     return False
 
-def undersample(G,d,bid=True):
+def undersample(G: dict, d: int, bid: bool = True) -> dict:
     """
-    
+    Perform undersampling on a graph.
     """
     N = {}
     for u in G: 
@@ -352,8 +355,8 @@ def exist_equal_paths(h,G,a,b):
     Sa, Sb, Dff = set(), set(), set()
     ag=iterate_allpaths(G,h,a,0,[],True)
     bg=iterate_allpaths(G,h,b,0,[],True)
-    for v in itt.izip_longest(ag,bg):
-        print v
+    for v in itt.zip_longest(ag,bg):
+        print(v)
         Sa.add(v[0])
         Sb.add(v[1])
         if v[0] in Sb or v[1] in Sa: return True
@@ -368,7 +371,7 @@ def iexist_equal_paths(h,G,a,b):
     ag=iddfs(G,h,a)
     bg=iddfs(G,h,b)
     for v in itt.izip(ag,bg):
-        print v
+        print(v)
         Sa.add(len(v[0])); Pa.append(v[0])
         Sb.add(len(v[1])); Pb.append(v[1])
         if len(v[0]) in Sb or len(v[1]) in Sa: return True
@@ -384,8 +387,8 @@ def has_unit_cycle(G,path):
 def ecj_compat(G,p1,p2):
     n = len(p1)
     m = len(p2)
-    p2, p1 = [[p1,p2][i] for i in scipy.argsort([n,m])]
-    m,n = scipy.sort([n,m])
+    p2, p1 = [[p1,p2][i] for i in np.argsort([n,m])]
+    m,n = np.sort([n,m])
     delta = n - m
     if not delta: return True # redundant check for 0
     if has_unit_cycle(G,p2): return True # equivalent
@@ -395,7 +398,7 @@ def ecj_compat(G,p1,p2):
     #                                            divisible by delta
 
     # otherwise start checking
-    print p1, p2, n, m, delta
+    print(p1, p2, n, m, delta)
 
 
 def wc(n):

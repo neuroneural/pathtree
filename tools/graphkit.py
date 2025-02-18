@@ -40,7 +40,7 @@ def inedgelist(g): # missing directed iterator
     '''
     n = len(g)
     for v in g:
-        for i in xrange(1,n+1):
+        for i in range(1,n+1):
             w = str(i)
             if not w in g[v]:
                 yield (v,w)

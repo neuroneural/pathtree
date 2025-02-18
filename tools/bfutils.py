@@ -1,27 +1,28 @@
 import scipy
 import itertools
-# from progressbar import ProgressBar, Percentage
+from functools import reduce
 from multiprocessing import Pool, Array, Process, Manager
 from numpy.random import randint
 import numpy as np
-# import ipdb
 import networkx as nx
 # local
+import bfutils as bfu
 import ecj
 import zickle as zkl
 import graphkit as gk
 from comparison import num2CG, nx2graph, isSclique
-import itertools
-#import rpy2
-
 
 def pure_directed_inc(G, D):
+    # Initialize G_un as a dictionary
+    G_un = {}
+    
     # directed edges
     for v in D:
         G_un[v] = {}
         for w in D[v]:
             if G[w]:
-                for e in G[w]: G_un[v][e] = set([(0, 1)])
+                for e in G[w]:
+                    G_un[v][e] = set([(0, 1)])
     return G_un
 
 
@@ -61,6 +62,8 @@ def increment(g):
     Returns:
         r: a graph in the dictionary format
     """
+    if not g:
+        return {}
     r = {n: {} for n in g}
 
     for n in g:
@@ -106,28 +109,34 @@ def undersample(G, u):
     return Gu
 
 
-def all_undersamples(G_star):
-    glist = [G_star]
-    while True:
-        g = increment_u(G_star, glist[-1])
-        if ecj.isSclique(g): return glist  # superclique convergence
-        # this will (may be) capture DAGs and oscillations
-        if g in glist: return glist
-        glist.append(g)
-    return glist
+def all_undersamples(G_star, max_steps=1000):
+    glist = {ug2num(G_star)}
+    lastgraph = G_star
+    for _ in range(max_steps):
+        g = increment_u(G_star, lastgraph)
+        g_num = ug2num(g)
+        if g_num in glist:
+            return list(glist)
+        glist.add(g_num)
+        lastgraph = g
+    raise ValueError("Exceeded maximum undersampling steps without convergence.")
 
 
 def graph2adj(G):
+    if not isinstance(G, dict):
+        raise TypeError("Input graph must be a dictionary.")
     n = len(G)
-    A = scipy.zeros((n, n), dtype=np.int8)
+    A = np.zeros((n, n), dtype=np.int8)
     for v in G:
         A[int(v) - 1, [int(w) - 1 for w in G[v] if (0, 1) in G[v][w]]] = 1
     return A
 
 
 def graph2badj(G):
+    if not isinstance(G, dict):
+        raise TypeError("Input graph must be a dictionary.")
     n = len(G)
-    A = scipy.zeros((n, n), dtype=np.int8)
+    A = np.zeros((n, n), dtype=np.int8)
     for v in G:
         A[int(v) - 1, [int(w) - 1 for w in G[v] if (2, 0) in G[v][w]]] = 1
     return A
@@ -250,7 +259,7 @@ def bg2num(g):
 def num2adj(num, n):
     l = list(bin(num)[2:])
     l = ['0' for i in range(0, n ** 2 - len(l))] + l
-    return scipy.reshape(map(int, l), [n, n])
+    return np.reshape(list(map(int, l)), [n, n])
 
 
 def add_bd_by_adj(G, adj):
@@ -302,7 +311,7 @@ def forms_loop(G_star, loop):
     return False
 
 
-def call_u_conflicts_d(G_star, H, checkrate=0):
+def call_u_conflicts_d(G_star, H):
     glist = [G_star]
     while True:
         g = dincrement_u(G_star, glist[-1])
@@ -312,7 +321,7 @@ def call_u_conflicts_d(G_star, H, checkrate=0):
     return True
 
 
-def call_u_conflicts(G_star, H, checkrate=0):
+def call_u_conflicts(G_star, H):
     glist = [G_star]
     while True:
         # g = increment_u(G_star, glist[-1])
@@ -355,6 +364,16 @@ def call_u_equals(G_star, H):
 
 
 def compact_call_undersamples(G_star, steps=None):
+    """
+    Perform compact undersampling on a graph and return unique graph representations.
+
+    Args:
+        G_star: The input graph (dictionary format).
+        steps: Optional number of steps to perform undersampling.
+
+    Returns:
+        A list of unique graph representations (as integers).
+    """
     glist = [ug2num(G_star)]
     lastgraph = G_star
     while True:
@@ -368,7 +387,7 @@ def compact_call_undersamples(G_star, steps=None):
 def cc_undersamples(G_star, steps=1):
     glist = [ug2num(G_star)]
     lastgraph = G_star
-    for i in xrange(steps):
+    for i in range(steps):
         g = increment_u(G_star, lastgraph)
         n = ug2num(g)
         if n in glist: return []
@@ -398,31 +417,31 @@ def compat(G):
 
 
 def icompat(i, nodes):
-    print i
+    print(i)
     g = num2CG(i, nodes)
     return compat(g)
 
 
 def ilength(i, nodes):
-    print i
+    print(i)
     g = num2CG(i, nodes)
     return len(call_undersamples(g))
 
 
 def iall(i, nodes):
-    print i
+    print(i)
     g = num2CG(i, nodes)
     return compact_call_undersamples(g)
 
 
 def cc_all(i, nodes, steps):
-    # print i
+    # print(i)
     g = num2CG(i, nodes)
     return i, cc_undersamples(g, steps=steps)
 
 
 def make_rect(l):
-    max_seq = max(map(len, l))
+    max_seq = max([len(e) for e in l])
     nl = []
     for e in l:
         e += [e[-1]] * (max_seq - len(e))
@@ -432,7 +451,7 @@ def make_rect(l):
 
 def uniqseq(l):
     s = []
-    ltr = map(lambda *a: list(a), *l)
+    ltr = list(map(lambda *a: list(a), *l))
     for i in range(len(ltr)):
         s.append(len(np.unique(ltr[i])))
 
@@ -473,6 +492,8 @@ def graph2jason(g):
 
 
 def ring(n):
+    if n <= 0:
+        raise ValueError("Number of nodes must be positive.")
     g = {}
     for i in range(1, n):
         g[str(i)] = {str(i + 1): set([(0, 1)])}
@@ -542,7 +563,7 @@ def scale_free(n, alpha=0.7, beta=0.25,
 
 def randH(n, d1, d2):
     g = bfu.ringmore(n, d1)
-    pairs = [x for x in itertools.combinations(g.keys(), 2)]
+    pairs = [x for x in itertools.combinations(list(g.keys()), 2)]
     for p in np.random.permutation(pairs)[:d2]:
         g[p[0]].setdefault(p[1], set()).add((2, 0))
         g[p[1]].setdefault(p[0], set()).add((2, 0))

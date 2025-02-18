@@ -1,5 +1,5 @@
 from networkx import strongly_connected_components
-from functools import wraps
+from functools import reduce, wraps
 import scipy
 import numpy as np
 import itertools, copy, time
@@ -46,7 +46,7 @@ def isedgesubset(g2star,g2):
 def chunks(l, n):
     """ Yield successive n-sized chunks from l.
     """
-    for i in xrange(0, len(l), n):
+    for i in range(0, len(l), n):
         yield l[i:i+n]
 
 def purgepath(path, l):
@@ -370,7 +370,7 @@ def fordens(n,denslist, repeats=100):
 def fordensDS(n,denslist, repeats=100):
     rl={}
     for d in denslist:
-        print d
+        print(d)
         ee = bfu.dens2edgenum(d,n)
         l=[checkerDS(n,ee)[-1] for i in range(repeats)]
         rl[d] = (round(scipy.mean(l),3),round(scipy.std(l),3))
@@ -894,7 +894,7 @@ def edge_backtrack2g1(g2, capsize=None):
     computes all g1 that are in the equivalence class for g2
     '''
     if ecj.isSclique(g2):
-        print 'Superclique - any SCC with GCD = 1 fits'
+        print('Superclique - any SCC with GCD = 1 fits')
         return set([-1])
 
     single_cache = {}
@@ -942,7 +942,7 @@ def edge_backtrack2g1_directed(g2, capsize=None):
     computes all g1 that are in the equivalence class for g2
     '''
     if ecj.isSclique(g2):
-        print 'Superclique - any SCC with GCD = 1 fits'
+        print('Superclique - any SCC with GCD = 1 fits')
         return set([-1])
 
     single_cache = {}
@@ -992,7 +992,7 @@ def g22g1(g2, capsize=None):
     computes all g1 that are in the equivalence class for g2
     '''
     if ecj.isSclique(g2):
-        print 'Superclique - any SCC with GCD = 1 fits'
+        print('Superclique - any SCC with GCD = 1 fits')
         return set([-1])
 
     single_cache = {}
@@ -1047,7 +1047,7 @@ def backtrack_more(g2, rate=1, capsize=None):
     computes all g1 that are in the equivalence class for g2
     '''
     if ecj.isSclique(g2):
-        print 'Superclique - any SCC with GCD = 1 fits'
+        print('Superclique - any SCC with GCD = 1 fits')
         return set([-1])
 
     single_cache = {}
@@ -1106,7 +1106,7 @@ def backtrack_more(g2, rate=1, capsize=None):
 
 def backtrackup2u(H,umax=2):
     s = set()
-    for i in xrange(1,umax+1):
+    for i in range(1,umax+1):
         s = s | backtrack_more(H,rate=i)
     return s
 
@@ -1115,7 +1115,7 @@ def vg22g1(g2, capsize=None):
     computes all g1 that are in the equivalence class for g2
     '''
     if ecj.isSclique(g2):
-        print 'Superclique - any SCC with GCD = 1 fits'
+        print('Superclique - any SCC with GCD = 1 fits')
         return set([-1])
 
     f = [(add2edges, del2edges),
@@ -1169,7 +1169,7 @@ def v2g22g1(g2, capsize=None, verbose=True):
     computes all g1 that are in the equivalence class for g2
     '''
     if ecj.isSclique(g2):
-        print 'Superclique - any SCC with GCD = 1 fits'
+        print('Superclique - any SCC with GCD = 1 fits')
         return set([-1])
 
     f = [(add2edges,del2edges,mask2edges),
@@ -1286,7 +1286,7 @@ def v2g22g1(g2, capsize=None, verbose=True):
     cds, order, idx = conformanceDS(g2, gg, keys)
     endTime = int(round(time.time() * 1000))
     if verbose:
-        print "precomputed in {:10} seconds".format(round((endTime-startTime)/1000.,3))
+        print("precomputed in {:10} seconds".format(round((endTime-startTime)/1000.,3)))
     if 0 in [len(x) for x in order]:
         return set()
     g = cloneempty(g2)
@@ -1295,8 +1295,8 @@ def v2g22g1(g2, capsize=None, verbose=True):
     try:
         nodesearch(g, g2, [keys[i] for i in idx], ['0'], s, cds, order, set())
         #nodesearch0(g, g2, [gg.keys()[i] for i in idx], ['0'], s, cds)
-    except ValueError, e:
-        print e
+    except ValueError as e:
+        print(e)
         s.add(0)
     return s
 
@@ -1305,7 +1305,7 @@ def backtrack_more2(g2, rate=2, capsize=None):
     computes all g1 that are in the equivalence class for g2
     '''
     if ecj.isSclique(g2):
-        print 'Superclique - any SCC with GCD = 1 fits'
+        print('Superclique - any SCC with GCD = 1 fits')
         return set([-1])
 
     f = [(addaVpath,delaVpath,maskaVpath)]
@@ -1369,7 +1369,7 @@ def backtrack_more2(g2, rate=2, capsize=None):
     keys = gg.keys()
     cds, order, idx = conformanceDS(g2, gg, gg.keys(), f=f, c=c)
     endTime = int(round(time.time() * 1000))
-    print "precomputed in {:10} seconds".format(round((endTime-startTime)/1000.,3))
+    print("precomputed in {:10} seconds".format(round((endTime-startTime)/1000.,3)))
     if 0 in [len(x) for x in order]:
         return set()
     g = cloneempty(g2)
@@ -1377,8 +1377,8 @@ def backtrack_more2(g2, rate=2, capsize=None):
     s = set()
     try:
         nodesearch(g, g2, [keys[i] for i in idx], ['0'], s, cds, order, set())
-    except ValueError, e:
-        print e
+    except ValueError as e:
+        print(e)
         s.add(0)
     return s
 

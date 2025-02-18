@@ -1,7 +1,6 @@
 import sys
 
-sys.path.append('./tools/')
-import traversal, bfutils
+from gunfolds.utils import bfutils, graphkit
 import numpy as np
 from ortools.constraint_solver import pywrapcp
 
@@ -12,10 +11,11 @@ k = 25 # number of extra edges
 solver = pywrapcp.Solver("MSL")
 
 # generate a random graph and undersample
-g = bfutils.ringmore(N,k)
-gdens = traversal.density(g)
+g = graphkit.ringmore(N,k)
+gdens = graphkit.density(g)
 g2 = bfutils.undersample(g,U-1)
-
+print("g2:", g2)
+print("g2 keys:", list(g2.keys()))
 # undersampled edges
 dedgeu = {}
 bedgeu = {}
@@ -23,11 +23,15 @@ for i in range(N):
     for j in range(N):
         dedgeu[(i,j)] = 0
         bedgeu[(i,j)] = 0
-        v = str(i+1)
-        w = str(j+1)
-        if w in g2[v]:
-            if (0,1) in g2[v][w]: dedgeu[(i,j)] = 1
-            if (2,0) in g2[v][w]: bedgeu[(i,j)] = 1
+        v = i + 1
+        w = j + 1
+        if v in g2 and w in g2[v]:  # Ensure the keys exist in g2
+            # Directed edge check
+            if isinstance(g2[v][w], dict) and (0, 1) in g2[v][w]:
+                dedgeu[(i, j)] = 1
+            # Bidirected edge check
+            if isinstance(g2[v][w], dict) and (2, 0) in g2[v][w]:
+                bedgeu[(i, j)] = 1
         
 
 # declare variables
@@ -92,17 +96,16 @@ solver.Solve(solver.Phase([edges[i][j] for i in range(N) for j in range(N)],
 num_solutions = collector.SolutionCount()
 
 # output solutions
-print "num_solutions:", num_solutions
-print "failures:", solver.Failures()
-print "branches:", solver.Branches()
-print "WallTime:", solver.WallTime()
+print("num_solutions:", num_solutions)
+print("failures:", solver.Failures())
+print("branches:", solver.Branches())
+print("WallTime:", solver.WallTime())
 
 if num_solutions > 0 and num_solutions < 5:
     for s in range(num_solutions):
         qval = [collector.Value(s, edges[i][j]) for i in range(N) for j in range(N)]
         for i in range(len(qval)):
             if qval[i]:
-                e = np.unravel_index(i,[N,N])
-                print e[0],"->",e[1]
-        print
-        print
+                e = np.unravel_index(i, [N, N])
+                print(e[0], "->", e[1])
+        print()

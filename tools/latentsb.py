@@ -44,13 +44,10 @@ def learn_path_tree(pt, target_lags):
     Instead of iterating over all integers, we only consider candidate values from target_lags.
     If a candidate cannot be represented by the current tree, it is simply skipped.
     """
-    # Sort the observed delays. (If non-integers occur, they will be placed at the end.)
-    elements = sorted(list(target_lags), key=lambda x: x if isinstance(x, int) else float('inf'))
-    if not elements:
+    # Instead of taking just the minimum delay, store the entire set.
+    if not target_lags:
         raise ValueError("Target lag set is empty.")
-
-    # Initialize the new PathTree with the smallest observed delay.
-    newpt = PathTree(preset=elements[0])
+    newpt = PathTree(preset=target_lags)
 
     def rpath(remaining, npt):
         for candidate in remaining:

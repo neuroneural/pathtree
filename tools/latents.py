@@ -367,7 +367,7 @@ def merge_weightsets(ab, ah, hb, hh):
     print(f"merge_weightsets called with:\n  ab={ab}, ah={ah}, hb={hb}, hh={hh}")
 
     # 1) Sum the indirect paths (from ah and hb) before combining
-    indirect_paths = osumset(ah, hb)  # Sum of paths via hidden node
+    indirect_paths = osumset_full(ah, hb)  # Sum of paths via hidden node
     print(f"  Indirect paths (sum of ah and hb): {indirect_paths}")
     indirect_paths.discard(0)
     print(f"  Indirect paths after discarding 0: {indirect_paths}")
@@ -445,17 +445,17 @@ def hide_node(g, H):
                 for j in range(i+1, len(children_list)):
                     c1 = children_list[i]
                     c2 = children_list[j]
-                    # For induced edges among children, we merge the lag sets from H->c1 and H->c2, plus any self-loop on H.
                     lag_c1 = ch[c1] if c1 in ch else set()
                     lag_c2 = ch[c2] if c2 in ch else set()
                     w = merge_weightsets(set(), lag_c1, lag_c2, sl)
-                    # Insert induced edges in both directions.
-                    for (u, v) in [(c1, c2), (c2, c1)]:
-                        if u not in gg:
-                            gg[u] = {}
-                        if v not in gg[u]:
-                            gg[u][v] = {}
-                        gg[u][v][1] = w
+                    # Choose a canonical ordering to represent the bidirected edge once.
+                    u, v = sorted([c1, c2])
+                    if u not in gg:
+                        gg[u] = {}
+                    if v not in gg[u]:
+                        gg[u][v] = {}
+                    # Insert as a bidirected edge (edge type 2)
+                    gg[u][v][2] = w
     # Clean up any remaining references to H.
     for parent in list(gg.keys()):
         gg[parent].pop(H, None)

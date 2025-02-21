@@ -356,33 +356,29 @@ def iterate_pt(pt):  # iterate over a path tree
     return starts
 
 def merge_weightsets(ab, ah, hb, hh):
-    """
-    Merge weight sets from:
-      - ab: existing direct edge p->c
-      - ah: parent's p->r lags
-      - hb: child's r->c lags
-      - hh: hidden node self-loop lags
-    Ensures shortest paths are properly summed and expanded with self-loops.
-    """
     print(f"merge_weightsets called with:\n  ab={ab}, ah={ah}, hb={hb}, hh={hh}")
-
-    # 1) Sum the indirect paths (from ah and hb) before combining
-    indirect_paths = osumset_full(ah, hb)  # Sum of paths via hidden node
-    print(f"  Indirect paths (sum of ah and hb): {indirect_paths}")
-    indirect_paths.discard(0)
-    print(f"  Indirect paths after discarding 0: {indirect_paths}")
-
-    self_loop_expansion = InfiniteExpression(0)
-    for h in hh:
-        var = get_fresh_loop_var()
-        self_loop_expansion.add_term(h, var)
-    print(f"  Self-loop expansion: {self_loop_expansion}")
-
-    indirect_paths_with_loops = osumset_full(indirect_paths, self_loop_expansion)
-    final_result = indirect_paths_with_loops.union(ab)
-    final_result.discard(0)
-    print(f"  Final merged edge-lag set (ws_final): {final_result}")
-
+    
+    # If there is no pre-existing direct edge (ab is empty), we are inducing a bi-directed edge.
+    if not ab:
+        # Compute the difference: for every parent's lag (x) and child's lag (y), compute (y - x).
+        diff = {y - x for x in ah for y in hb}
+        final_result = diff
+    else:
+        # Otherwise, use the existing summation approach.
+        indirect_paths = osumset_full(ah, hb)
+        print("  Indirect paths (sum of ah and hb):", indirect_paths)
+        indirect_paths.discard(0)
+        print("  Indirect paths after discarding 0:", indirect_paths)
+        self_loop_expansion = InfiniteExpression(0)
+        for h in hh:
+            var = get_fresh_loop_var()
+            self_loop_expansion.add_term(h, var)
+        print("  Self-loop expansion:", self_loop_expansion)
+        indirect_paths_with_loops = osumset_full(indirect_paths, self_loop_expansion)
+        final_result = indirect_paths_with_loops.union(ab)
+    
+    #final_result.discard(0)
+    print("  Final merged edge-lag set (ws_final):", final_result)
     return final_result if final_result else {0}
 
 
@@ -448,14 +444,13 @@ def hide_node(g, H):
                     lag_c1 = ch[c1] if c1 in ch else set()
                     lag_c2 = ch[c2] if c2 in ch else set()
                     w = merge_weightsets(set(), lag_c1, lag_c2, sl)
-                    # Choose a canonical ordering to represent the bidirected edge once.
-                    u, v = sorted([c1, c2])
-                    if u not in gg:
-                        gg[u] = {}
-                    if v not in gg[u]:
-                        gg[u][v] = {}
-                    # Insert as a bidirected edge (edge type 2)
-                    gg[u][v][2] = w
+                    # Insert the induced edge as a bi-directed edge (edge type 2) in both directions.
+                    for (u, v) in [(c1, c2), (c2, c1)]:
+                        if u not in gg:
+                            gg[u] = {}
+                        if v not in gg[u]:
+                            gg[u][v] = {}
+                        gg[u][v][2] = w
     # Clean up any remaining references to H.
     for parent in list(gg.keys()):
         gg[parent].pop(H, None)

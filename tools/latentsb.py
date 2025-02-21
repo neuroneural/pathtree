@@ -40,48 +40,27 @@ def can_add_loop(pt, num, elements):
 
 def learn_path_tree(pt, target_lags):
     """
-    Extend the given PathTree pt so that it can represent the observed edge-lag set target_lags.
-    Instead of iterating over all integers, we only consider candidate values from target_lags.
-    If a candidate cannot be represented by the current tree, it is simply skipped.
+    Return a PathTree that represents the union of observed delays.
+    Here, we simply set the preset to be the entire target_lags set.
+    We then warn if any candidate in target_lags is not representable.
     """
-    # Instead of taking just the minimum delay, store the entire set.
     if not target_lags:
         raise ValueError("Target lag set is empty.")
+
+    # Sort the target delays for logging purposes.
+    elements = sorted(list(target_lags), key=lambda x: x if isinstance(x, int) else float('inf'))
+    # Initialize the tree with the union of delays.
     newpt = PathTree(preset=target_lags)
-
-    def rpath(remaining, npt):
-        for candidate in remaining:
-            # If npt already generates candidate, nothing to do.
-            if ptt.isptelement(npt, candidate, maxloop=10 * len(elements)):
-                continue
-            # Try to extend npt to generate candidate.
-            try:
-                refined = growtree(npt, candidate, elements)
-            except SolutionNotFoundInTime:
-                # Skip candidate if no extension is found.
-                continue
-            if refined is None:
-                # Candidate not representable; skip it.
-                continue
-            # Otherwise, update the current tree.
-            npt = refined
-        return npt
-
-    # Process candidates (other than the smallest, which is already the preset)
-    refined_pt = rpath(elements[1:], newpt)
-
-    # Instead of throwing an exception if some candidate is not representable,
-    # we log a warning and return the tree as-is.
-    representable = []
+    
+    # Optionally, check that every candidate is representable.
     not_representable = []
     for candidate in elements:
-        if ptt.isptelement(refined_pt, candidate, maxloop=10 * len(elements)):
-            representable.append(candidate)
-        else:
+        if not ptt.isptelement(newpt, candidate, maxloop=10 * len(elements)):
             not_representable.append(candidate)
     if not_representable:
-        print(f"Warning: the following elements are not representable in the PathTree: {not_representable}")
-    return refined_pt
+        print(f"Warning: the following candidates are not representable in the PathTree: {not_representable}")
+    
+    return newpt
 
 def convert_bclique(bc):
     # Assume bc is a set of tuples (u, v).

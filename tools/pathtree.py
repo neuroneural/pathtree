@@ -31,10 +31,29 @@ class InfiniteExpression:
         else:
             return " + ".join(term_parts)
 
+    def __gt__(self, other):
+        if isinstance(other, InfiniteExpression):
+            return self.base > other.base
+        elif isinstance(other, (int, float)):
+            return self.base > other
+        else:
+            raise TypeError(f"Cannot compare InfiniteExpression with {type(other)}")
+    
+    def __lt__(self, other):
+        if isinstance(other, InfiniteExpression):
+            return self.base < other.base
+        elif isinstance(other, (int, float)):
+            return self.base < other
+        else:
+            raise TypeError(f"Cannot compare InfiniteExpression with {type(other)}")
+    
     def __eq__(self, other):
-        return (isinstance(other, InfiniteExpression) and
-                self.base == other.base and
-                self.terms == other.terms)
+        if isinstance(other, InfiniteExpression):
+            return self.base == other.base and self.terms == other.terms
+        elif isinstance(other, (int, float)):
+            return self.base == other and not self.terms
+        else:
+            return False
 
     def __hash__(self):
         return hash((self.base, frozenset(self.terms.items())))
@@ -83,30 +102,16 @@ def osumset(*sets):
     return {final_expr}  # Return as an object, not a string
 
 def osumset_full(*sets):
-    """
-    Perform a full cartesian sum on integer sets, and merge infinite expressions symbolically.
-    
-    If passing multiple sets:
-      - Each set can contain integers or InfiniteExpressions (or be empty).
-      - We do a cartesian product among them.
-      - Summation of an int + int is a plain int,
-        an int + InfiniteExpression is a new InfiniteExpression, 
-        or an InfiniteExpression + InfiniteExpression merges them symbolically.
-        
-    Returns:
-      A set of integers and/or InfiniteExpression objects representing all possible sums.
-    """
-
-    # Start with a result that has one element: integer 0
-    # so we can sum the next set with it cartesian-style.
+    # Start with a result that contains only 0.
     result = {0}
     
-    # Helper to sum two “elements,” each either an int or an InfiniteExpression.
+    # Helper function to merge two elements.
     def merge_two(e1, e2):
         if isinstance(e1, int) and isinstance(e2, int):
             return e1 + e2
+        # If you have InfiniteExpression types, handle them accordingly.
         elif isinstance(e1, int) and isinstance(e2, InfiniteExpression):
-            return e2 + e1  # same as e2 + int
+            return e2 + e1
         elif isinstance(e1, InfiniteExpression) and isinstance(e2, int):
             return e1 + e2
         elif isinstance(e1, InfiniteExpression) and isinstance(e2, InfiniteExpression):
@@ -115,22 +120,19 @@ def osumset_full(*sets):
             raise TypeError(f"osumset_full can only handle ints or InfiniteExpressions, got {e1} + {e2}")
     
     for s in sets:
-        # If s is not a set, convert it to one so we can iterate
-        # (some code might pass a single int or single InfiniteExpression)
-        if isinstance(s, set) and all(isinstance(x, int) for x in s):
-            result = result.union(s)
-            continue  # Skip the Cartesian product below
+        # Ensure s is a set.
         if isinstance(s, (int, InfiniteExpression)):
             s = {s}
         elif not isinstance(s, set):
             raise TypeError(f"osumset_full expects sets, ints, or InfiniteExpressions, got {type(s)}: {s}")
-
+        
+        # Always do the Cartesian sum.
         new_result = set()
         for r_elem in result:
             for s_elem in s:
                 merged_val = merge_two(r_elem, s_elem)
                 new_result.add(merged_val)
-        result = new_result  # move on to the next set
+        result = new_result
 
     return result
 from sympy import sympify
@@ -157,10 +159,11 @@ class PathTree:
 
     def get_overall_delay_expr(self, counter=None):
         if counter is None:
-            counter = [1]  # mutable counter to ensure unique weight symbols
+            counter = [1]  # mutable counter for unique weight symbols
 
-        if isinstance(self.preset, InfiniteExpression):
-            base_expr = self.preset.to_sympy()
+        # If the preset is a set, represent it as is (or choose a symbolic representation)
+        if isinstance(self.preset, set):
+            base_expr = self.preset  # or a symbolic union if you have one
         else:
             base_expr = sympify(self.preset)
 
@@ -171,6 +174,7 @@ class PathTree:
             child_expr = child.get_overall_delay_expr(counter)
             terms.append(w * child_expr)
         if terms:
+            # If base_expr is a set, you may need to decide how to combine with the additional terms.
             return base_expr + Add(*terms)
         else:
             return base_expr
@@ -191,20 +195,7 @@ class PathTree:
         return f"PathTree(base={const_part}, label={self.label}, children={self.children})"
 
 
-    
 def assign_alpha_labels(pt, label_map=None, next_label=None):
-    """
-    Recursively assign an alpha label to each node in the path tree based on its local cycle structure.
-    
-    The signature for a node is defined as a tuple:
-         (preset, (sorted(child_signature_1, child_signature_2, ...)))
-    Nodes with the same signature receive the same label.
-    
-    :param pt: The PathTree node (root) to process.
-    :param label_map: A dictionary mapping signatures to assigned labels.
-    :param next_label: A mutable counter (e.g., a list with one integer) for the next new label.
-    :return: The signature for pt.
-    """
     if label_map is None:
         label_map = {}
     if next_label is None:
@@ -218,11 +209,11 @@ def assign_alpha_labels(pt, label_map=None, next_label=None):
     
     # Sort the child signatures to ensure a canonical order.
     child_signatures = tuple(sorted(child_signatures))
-    # The signature for this node is its preset plus the ordered child signatures.
-    signature = (pt.preset, child_signatures)
+    # If the preset is a set, convert it to a frozenset so that it's hashable.
+    base = frozenset(pt.preset) if isinstance(pt.preset, set) else pt.preset
+    signature = (base, child_signatures)
     pt.signature = signature
 
-    # Assign the label based on the signature.
     if signature in label_map:
         pt.label = label_map[signature]
     else:

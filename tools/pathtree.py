@@ -135,7 +135,6 @@ def osumset_full(*sets):
         result = new_result
 
     return result
-from sympy import sympify
 
 class PathTree:
     def __init__(self, preset=0, label=0, children=None):
@@ -161,12 +160,25 @@ class PathTree:
         if counter is None:
             counter = [1]  # mutable counter for unique weight symbols
 
-        # If the preset is a set, represent it as is (or choose a symbolic representation)
-        if isinstance(self.preset, set):
-            base_expr = self.preset  # or a symbolic union if you have one
-        else:
-            base_expr = sympify(self.preset)
+        def convert(val):
+            if isinstance(val, InfiniteExpression):
+                return val.to_sympy()
+            else:
+                return sympify(val)
 
+        # Handle the base value
+        if isinstance(self.preset, set):
+            # Assume for our purposes that the preset is a singleton set.
+            if len(self.preset) == 1:
+                base_expr = convert(next(iter(self.preset)))
+            else:
+                # If there are multiple elements, you may decide on a different policy.
+                # For now, we'll add them together.
+                base_expr = Add(*[convert(x) for x in self.preset])
+        else:
+            base_expr = convert(self.preset)
+
+        # Process children contributions.
         terms = []
         for child in self.children:
             w = symbols(f'w{counter[0]}')
@@ -174,10 +186,10 @@ class PathTree:
             child_expr = child.get_overall_delay_expr(counter)
             terms.append(w * child_expr)
         if terms:
-            # If base_expr is a set, you may need to decide how to combine with the additional terms.
             return base_expr + Add(*terms)
         else:
             return base_expr
+
 
     def __repr__(self):
         """
@@ -185,7 +197,6 @@ class PathTree:
         - The root (base) shows only the constant (cycle‑free) part.
         - The children list shows any nested PathTrees (which capture cycle contributions).
         """
-        from sympy import sympify
         try:
             # Convert preset to a sympy expression and split it into constant and nonconstant parts.
             expr = sympify(self.preset)

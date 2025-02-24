@@ -41,18 +41,21 @@ def can_add_loop(pt, num, elements):
 def learn_path_tree(pt, target_lags):
     """
     Return a PathTree that represents the union of observed delays.
-    Here, we simply set the preset to be the entire target_lags set.
-    We then warn if any candidate in target_lags is not representable.
+    If target_lags is already a PathTree (i.e. pt already has the refined structure, including children),
+    simply return it; otherwise, build a new tree using the observed delays.
     """
-    if not target_lags:
-        raise ValueError("Target lag set is empty.")
-
-    # Sort the target delays for logging purposes.
-    elements = sorted(list(target_lags), key=lambda x: x if isinstance(x, int) else float('inf'))
-    # Initialize the tree with the union of delays.
-    newpt = PathTree(preset=target_lags)
+    # If target_lags is a PathTree, assume pt is already refined.
+    if isinstance(target_lags, PathTree):
+        return pt  # Preserve children, self-loop expansion, etc.
     
-    # Optionally, check that every candidate is representable.
+    # Otherwise, assume target_lags is a set of observed delays.
+    observed = target_lags
+    if not observed:
+        raise ValueError("Target lag set is empty.")
+    
+    # Optionally, sort and check representability (if needed)
+    elements = sorted(list(observed), key=lambda x: x if isinstance(x, int) else float('inf'))
+    newpt = PathTree(preset=observed)
     not_representable = []
     for candidate in elements:
         if not ptt.isptelement(newpt, candidate, maxloop=10 * len(elements)):
@@ -61,6 +64,7 @@ def learn_path_tree(pt, target_lags):
         print(f"Warning: the following candidates are not representable in the PathTree: {not_representable}")
     
     return newpt
+
 
 def convert_bclique(bc):
     # Assume bc is a set of tuples (u, v).
@@ -79,7 +83,11 @@ def bpts(graph, bclique):
     pts = set()
     for edge in edge_lag_dict:
         target_lags = edge_lag_dict[edge]
-        pt = PathTree(preset=min(target_lags, key=lambda x: x if isinstance(x, int) else float('inf')))
+        # If the target lag is already a PathTree, use it; otherwise, create one.
+        if isinstance(target_lags, PathTree):
+            pt = target_lags
+        else:
+            pt = PathTree(preset=min(target_lags, key=lambda x: x if isinstance(x, int) else float('inf')))
         try:
             learned_pt = learn_path_tree(pt, target_lags)
             pts.add(learned_pt)

@@ -355,36 +355,41 @@ def iterate_pt(pt):  # iterate over a path tree
         starts.append([e.preset, iterate_ws(e.loopset)])
     return starts
 
-def merge_weightsets(ab, ah, hb, hh):
-    print(f"merge_weightsets called with:\n  ab={ab}, ah={ah}, hb={hb}, hh={hh}")
+def merge_weightsets(ab, ah, hb, hh, induced_bidirected=False):
+    print(f"merge_weightsets called with:\n  ab={ab}, ah={ah}, hb={hb}, hh={hh}, induced_bidirected={induced_bidirected}")
     
-    # If there is no pre-existing direct edge (ab is empty), we are inducing a bi-directed edge.
-    if not ab:
-        # Compute the difference: for every parent's lag (x) and child's lag (y), compute (y - x).
-        diff = {y - x for x in ah for y in hb}
-        final_result = diff
+    if induced_bidirected:
+        # For induced bidirected edges, compute the difference: y - x for every x in ah and y in hb.
+        final_result = {y - x for x in ah for y in hb}
+        # Return a simple PathTree with the computed set as the base.
+        pt = PathTree(preset=final_result)
     else:
-        # Otherwise, use the existing summation approach.
+        # Compute the indirect (direct) path lags by Cartesian summing.
         indirect_paths = osumset_full(ah, hb)
         print("  Indirect paths (sum of ah and hb):", indirect_paths)
         indirect_paths.discard(0)
         print("  Indirect paths after discarding 0:", indirect_paths)
+        # Base value is the union of any existing direct edge lags and the computed indirect paths.
+        base_value = indirect_paths.union(ab)
+        # Create a PathTree with this base value.
+        pt = PathTree(preset=base_value)
+        # Build the self-loop expansion.
         self_loop_expansion = InfiniteExpression(0)
         for h in hh:
             var = get_fresh_loop_var()
             self_loop_expansion.add_term(h, var)
         print("  Self-loop expansion:", self_loop_expansion)
-        indirect_paths_with_loops = osumset_full(indirect_paths, self_loop_expansion)
-        final_result = indirect_paths_with_loops.union(ab)
-    
-    #final_result.discard(0)
-    print("  Final merged edge-lag set (ws_final):", final_result)
-    return final_result if final_result else {0}
+        # If the self-loop expansion is nonzero, attach it as a separate child.
+        if self_loop_expansion != InfiniteExpression(0):
+            child_pt = PathTree(preset=self_loop_expansion)
+            pt.add_child(child_pt)
+    print("  Final merged PathTree:", pt)
+    return pt
 
 
 def hide_node(g, H):
     """
-    Removes a node H from graph g, recalculating edges (and weights) 
+    Removes a node H from graph g, recalculating edges (and weights)
     while ensuring logical handling of loops and paths.
     If H has no parents but does have children, induce new edges among its children.
     
@@ -411,30 +416,30 @@ def hide_node(g, H):
     # Remove the node H from gg
     remove_node(gg, H)   # deletes H and all its incident edges
     
-    # If H has parents, do the usual merging.
+    # If H has parents, do the usual merging (directed edge update).
     if pa:
         for p in pa:
             for c in ch:
                 # 1) Existing p->c edge-lag set (if any)
                 ab = gg[p][c].get(1, set()) if c in gg[p] else set()
-                # 2) parent's p->H lag set
+                # 2) Parent's p->H lag set
                 pa_weights = pa[p] if pa[p] else set()
                 # 3) H->child c lag set
                 ch_weights = ch[c] if c in ch else set()
-                # 4) self-loop on H
+                # 4) Self-loop on H
                 sl_weights = sl if sl else set()
                 print(f"For parent={p}, child={c}: ab={ab}, ah={pa_weights}, hb={ch_weights}, sl={sl_weights}")
                 if c == H or p == H:
                     continue
-                w = merge_weightsets(ab, pa_weights, ch_weights, sl_weights)
+                # Use summation merging for directed updates.
+                w = merge_weightsets(ab, pa_weights, ch_weights, sl_weights, induced_bidirected=False)
                 if p not in gg:
                     gg[p] = {}
                 if c not in gg[p]:
                     gg[p][c] = {}
-                gg[p][c][1] = w
+                gg[p][c][1] = w  # w is now a PathTree.
     else:
-        # If H has no parents (i.e., H is a source) but has children,
-        # then for every pair of distinct children, create an induced edge.
+        # If H has no parents, induce bidirected edges among its children.
         if ch:
             children_list = list(ch.keys())
             for i in range(len(children_list)):
@@ -443,14 +448,15 @@ def hide_node(g, H):
                     c2 = children_list[j]
                     lag_c1 = ch[c1] if c1 in ch else set()
                     lag_c2 = ch[c2] if c2 in ch else set()
-                    w = merge_weightsets(set(), lag_c1, lag_c2, sl)
-                    # Insert the induced edge as a bi-directed edge (edge type 2) in both directions.
+                    # Use difference merging for induced bidirected edges.
+                    w = merge_weightsets(set(), lag_c1, lag_c2, sl, induced_bidirected=True)
+                    # Insert the induced edge as bidirected (edge type 2) in both directions.
                     for (u, v) in [(c1, c2), (c2, c1)]:
                         if u not in gg:
                             gg[u] = {}
                         if v not in gg[u]:
                             gg[u][v] = {}
-                        gg[u][v][2] = w
+                        gg[u][v][2] = w  # w is a PathTree.
     # Clean up any remaining references to H.
     for parent in list(gg.keys()):
         gg[parent].pop(H, None)

@@ -751,3 +751,32 @@ def issptelement(spt, element):
     for pt in s2spt(spt):
         a = a or isptelement(pt, element)
     return a
+
+def unify_edge_representation(graph):
+    """
+    Convert all edges in the graph so that they store a PathTree, even if
+    originally they were just a set of integers.
+    """
+    for u in graph:
+        for v in graph[u]:
+            edge_data = graph[u][v]
+            if 1 in edge_data:  # directed
+                if isinstance(edge_data[1], set):
+                    # Wrap the set in a PathTree
+                    edge_data[1] = PathTree(preset=edge_data[1], loopset=set())
+            elif 2 in edge_data:  # bidirected
+                if isinstance(edge_data[2], set):
+                    edge_data[2] = PathTree(preset=edge_data[2], loopset=set())
+    return graph
+
+def print_graph_as_pathtrees(graph):
+    """
+    Print the edges in the graph. If an edge-lag is a PathTree, display it directly.
+    """
+    for u in sorted(graph.keys()):
+        for v in sorted(graph[u].keys()):
+            edge_data = graph[u][v]
+            if 1 in edge_data:  # directed
+                print(f"  {u} -> {v} = {edge_data[1]}")
+            elif 2 in edge_data:  # bidirected
+                print(f"  {u} <-> {v} = {edge_data[2]}")

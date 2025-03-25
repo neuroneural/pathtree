@@ -92,7 +92,7 @@ def osumset(*sets):
                     infinite_expression += x  # Add infinite terms properly
                 elif isinstance(x, int):  # Sum finite terms normally
                     finite_sum += x
-                elif isinstance(x, str):  # ❌ Catch early string conversion errors
+                elif isinstance(x, str):
                     raise TypeError(f"osumset() received an unexpected string: {x}")
                 else:
                     raise TypeError(f"osumset() received an unexpected type: {type(x)} ({x})")
@@ -135,77 +135,49 @@ def osumset_full(*sets):
         result = new_result
 
     return result
-
 class PathTree:
-    def __init__(self, preset=0, label=0, children=None):
+    """
+    A simpler node structure where:
+      - preset: the base delay (int or set of ints).
+      - loopset: a set containing either:
+          (a) integers (the minimal single-pass delay of a loop), or
+          (b) other PathTree objects (nested loops).
+    """
+    def __init__(self, preset=0, loopset=None):
+        self.preset = preset
+        # loopset can contain ints or PathTree objects
+        self.loopset = loopset if loopset is not None else set()
+    
+    def add_loop(self, loop_delay):
         """
-        Initialize a PathTree node.
-        
-        :param preset: Base delay (l) for this node.
-        :param label: The alpha label (default 0 means unlabeled).
-        :param children: A list of child PathTree objects (for recursive nesting).
+        Add a single-pass delay integer to loopset.
         """
-        self.preset = preset          # Base delay (ideally the constant part only)
-        self.label = label            # Alpha label for equivalence
-        self.children = children if children is not None else []  # List of child nodes
-        self.signature = None         # Will be computed from preset and children
+        self.loopset.add(loop_delay)
 
-    def add_child(self, child):
-        """Add a child node (a nested PathTree)."""
-        if not isinstance(child, PathTree):
-            raise TypeError("Child must be a PathTree instance.")
-        self.children.append(child)
-
-    def get_overall_delay_expr(self, counter=None):
-        if counter is None:
-            counter = [1]  # mutable counter for unique weight symbols
-
-        def convert(val):
-            if isinstance(val, InfiniteExpression):
-                return val.to_sympy()
-            else:
-                return sympify(val)
-
-        # Handle the base value
-        if isinstance(self.preset, set):
-            # Assume for our purposes that the preset is a singleton set.
-            if len(self.preset) == 1:
-                base_expr = convert(next(iter(self.preset)))
-            else:
-                # If there are multiple elements, you may decide on a different policy.
-                # For now, we'll add them together.
-                base_expr = Add(*[convert(x) for x in self.preset])
-        else:
-            base_expr = convert(self.preset)
-
-        # Process children contributions.
-        terms = []
-        for child in self.children:
-            w = symbols(f'w{counter[0]}')
-            counter[0] += 1
-            child_expr = child.get_overall_delay_expr(counter)
-            terms.append(w * child_expr)
-        if terms:
-            return base_expr + Add(*terms)
-        else:
-            return base_expr
-
+    def add_nested_loop(self, nested_loop):
+        """
+        Add a nested PathTree to loopset.
+        """
+        if not isinstance(nested_loop, PathTree):
+            raise TypeError("Nested loop must be a PathTree.")
+        self.loopset.add(nested_loop)
 
     def __repr__(self):
-        """
-        Custom representation:
-        - The root (base) shows only the constant (cycle‑free) part.
-        - The children list shows any nested PathTrees (which capture cycle contributions).
-        """
-        try:
-            # Convert preset to a sympy expression and split it into constant and nonconstant parts.
-            expr = sympify(self.preset)
-            const_part, _ = expr.as_coeff_Add()
-        except Exception:
-            const_part = self.preset
-        return f"PathTree(base={const_part}, label={self.label}, children={self.children})"
-
-
+        # If preset is a set with exactly one element, use that element.
+        if isinstance(self.preset, set) and len(self.preset) == 1:
+            preset_str = str(next(iter(self.preset)))
+        else:
+            preset_str = str(self.preset)
+        if self.loopset:
+            loopset_str = "<" + ', '.join([str(x) for x in self.loopset]) + ">"
+            return f"({preset_str}, {loopset_str})"
+        else:
+            return f"({preset_str})"
+    
+    # def __repr__(self):
+    #     return "(" + str(self.preset) + ", <" + ', '.join([str(x) for x in self.loopset])+">)" if self.loopset else "("+str(self.preset) + ")"
+        #return f"PathTree(preset={self.preset}, loopset={self.loopset})"
+        #return f"({self.preset}, <{self.loopset}>)" if self.loopset else f"({self.preset})"
 def assign_alpha_labels(pt, label_map=None, next_label=None):
     if label_map is None:
         label_map = {}

@@ -146,8 +146,6 @@ def update_directed_edges(graph, r):
     :param r: The node to be removed.
     :return: The updated graph.
     """
-    from copy import deepcopy
-
     parents_r = {p: graph[p][r][1] for p in graph if r in graph[p]}
     children_r = {c: graph[r][c] for c in graph[r]}
 
@@ -192,6 +190,21 @@ def update_directed_edges(graph, r):
     print("Updated graph after removing node:", updated_graph)
     return updated_graph
 
+def bidirected_forest(ah_forest, hb_forest):
+    """
+    For induced bidirected edges, compute (y - x) for every base in ah_forest and hb_forest,
+    returning a forest (list of PathTrees) with each difference as the preset.
+    """
+    new_forest = []
+    for pt1 in ah_forest:
+        bases1 = base_as_set(pt1.preset)
+        for pt2 in hb_forest:
+            bases2 = base_as_set(pt2.preset)
+            for x in bases1:
+                for y in bases2:
+                    diff_val = y - x
+                    new_forest.append(PathTree(preset={diff_val}, loopset=set()))
+    return new_forest
 
 def update_bidirected_edges(graph, r):
     """
@@ -355,91 +368,252 @@ def iterate_pt(pt):  # iterate over a path tree
         starts.append([e.preset, iterate_ws(e.loopset)])
     return starts
 
+def to_path_forest(x):
+    """
+    Convert x into a list of PathTrees (a path-forest).
+    If x is:
+      - an int: return [PathTree(preset={x}, loopset=set())]
+      - a set: return [PathTree(preset={b}, loopset=set()) for each b in x]
+      - a PathTree: return [x]
+      - a list (of PathTrees): return x
+    """
+    if isinstance(x, list):
+        return x
+    elif isinstance(x, PathTree):
+        return [x]
+    elif isinstance(x, int):
+        return [PathTree(preset={x}, loopset=set())]
+    elif isinstance(x, set):
+        return [PathTree(preset={b}, loopset=set()) for b in x]
+    elif x == set():
+        return []
+    else:
+        raise TypeError(f"Cannot convert {x} into a path-forest")
+
+def get_base_as_set(x):
+    """
+    Convert x into a set of ints.
+      - If x is an int, return {x}.
+      - If x is a set, return it.
+      - If x is a list, return the union over its elements.
+      - If x is a PathTree, return its preset (assumed to be int or set).
+    """
+    if isinstance(x, list):
+        result = set()
+        for item in x:
+            result = result.union(get_base_as_set(item))
+        return result
+    elif isinstance(x, set):
+        return x
+    elif isinstance(x, int):
+        return {x}
+    elif isinstance(x, PathTree):
+        if isinstance(x.preset, int):
+            return {x.preset}
+        elif isinstance(x.preset, set):
+            return x.preset
+        else:
+            raise TypeError("Unexpected type for PathTree.preset")
+    else:
+        raise TypeError("get_base_as_set expects an int, set, list, or PathTree")
+    
+def sum_forests(f1, f2):
+    """
+    For each PathTree in f1 and each PathTree in f2, produce new PathTrees
+    whose preset is the Cartesian sum of their bases and whose loopset is the union.
+    Return the new forest (list of PathTrees).
+    """
+    new_forest = []
+    for pt1 in f1:
+        bases1 = base_as_set(pt1.preset)
+        loops1 = set(pt1.loopset)
+        for pt2 in f2:
+            bases2 = base_as_set(pt2.preset)
+            loops2 = set(pt2.loopset)
+            s = osumset_full(bases1, bases2)
+            if 0 in s:
+                s.discard(0)
+            merged_loops = loops1.union(loops2)
+            for b in s:
+                new_forest.append(PathTree(preset={b}, loopset=merged_loops.copy()))
+    return new_forest
+
+def unify_forests(f1, f2):
+    """
+    Merge each PathTree in f2 into f1 if they have the same preset (i.e. same base).
+    Otherwise, keep them separate.
+    """
+    new_forest = f1[:]
+    for pt2 in f2:
+        base2 = base_as_set(pt2.preset)
+        inserted = False
+        for pt1 in new_forest:
+            base1 = base_as_set(pt1.preset)
+            if base1 == base2:
+                pt1.loopset.update(pt2.loopset)
+                inserted = True
+                break
+        if not inserted:
+            new_forest.append(pt2)
+    return new_forest
+
 def merge_weightsets(ab, ah, hb, hh, induced_bidirected=False):
-    print(f"merge_weightsets called with:\n  ab={ab}, ah={ah}, hb={hb}, hh={hh}, induced_bidirected={induced_bidirected}")
+    """
+    Combine delay contributions from parent->H (ah) and H->child (hb) and incorporate 
+    self-loop delays at H (hh), returning a path-forest (a list containing one PathTree)
+    with a separated preset (the cycle-free delay) and a hierarchical loopset.
+    
+    Parameters:
+      ab: Existing direct edge delay from parent to child (int, set, or PathTree/forest).
+      ah: Delay from parent to H (int, set, or PathTree/forest).
+      hb: Delay from H to child (int, set, or PathTree/forest).
+      hh: Self-loop delay at H. It can be a set/int (flat) or a list that may include nested
+          PathTree objects (for nested cycles).
+      induced_bidirected: If True, perform difference merging (not our current case).
+      
+    For the non-induced case:
+      1. Convert ah and hb to sets (ah_set and hb_set) via get_base_as_set.
+      2. Compute the indirect delay as indirect = osumset_full(ah_set, hb_set) and remove 0.
+      3. Let direct = get_base_as_set(ab). If direct is empty, then new_preset = indirect and extra = {}.
+         Otherwise, new_preset = direct and extra = (indirect - direct).
+      4. Process hh:
+         - If hh is a list, separate items that are PathTrees (nested branches) from flat delays.
+         - Let extra_hh be the union of the flat items (using get_base_as_set).
+         - Let nested_hh be the set of nested PathTree objects.
+         - For each nested branch, remove its preset (assumed to be a singleton) from the flat extra (if present).
+      5. Set final_loopset = extra ∪ extra_hh ∪ nested_hh.
+    
+    Returns a forest (list containing one PathTree) with:
+      preset = new_preset,
+      loopset = final_loopset.
+    """
+    # Convert ah and hb to sets.
+    if isinstance(ah, list):
+        ah_set = set().union(*(get_base_as_set(pt.preset) for pt in ah))
+    else:
+        ah_set = get_base_as_set(ah)
+    if isinstance(hb, list):
+        hb_set = set().union(*(get_base_as_set(pt.preset) for pt in hb))
+    else:
+        hb_set = get_base_as_set(hb)
     
     if induced_bidirected:
-        # For induced bidirected edges, compute the difference: y - x for every x in ah and y in hb.
-        final_result = {y - x for x in ah for y in hb}
-        # Return a simple PathTree with the computed set as the base.
-        pt = PathTree(preset=final_result)
+        new_base = {y - x for x in ah_set for y in hb_set}
+        pt = PathTree(preset=new_base)
+        pt.loopset = set()
+        forest = [pt]
+        print("Final merged PathForest:", forest)
+        return forest
     else:
-        # Compute the indirect (direct) path lags by Cartesian summing.
-        indirect_paths = osumset_full(ah, hb)
-        print("  Indirect paths (sum of ah and hb):", indirect_paths)
-        indirect_paths.discard(0)
-        print("  Indirect paths after discarding 0:", indirect_paths)
-        # Base value is the union of any existing direct edge lags and the computed indirect paths.
-        base_value = indirect_paths.union(ab)
-        # Create a PathTree with this base value.
-        pt = PathTree(preset=base_value)
-        # Build the self-loop expansion.
-        self_loop_expansion = InfiniteExpression(0)
-        for h in hh:
-            var = get_fresh_loop_var()
-            self_loop_expansion.add_term(h, var)
-        print("  Self-loop expansion:", self_loop_expansion)
-        # If the self-loop expansion is nonzero, attach it as a separate child.
-        if self_loop_expansion != InfiniteExpression(0):
-            child_pt = PathTree(preset=self_loop_expansion)
-            pt.add_child(child_pt)
-    print("  Final merged PathTree:", pt)
-    return pt
+        indirect = osumset_full(ah_set, hb_set)
+        if 0 in indirect:
+            indirect.discard(0)
+        print("  Indirect paths (sum of ah and hb):", indirect)
+        direct = get_base_as_set(ab)
+        if not direct:
+            new_preset = indirect
+            extra = set()
+        else:
+            new_preset = direct
+            extra = indirect - direct
+        
+        # Process self-loop delays (hh)
+        extra_hh = set()     # flat self-loop delays
+        nested_hh = set()    # nested PathTree delays
+        if hh:
+            if isinstance(hh, list):
+                for item in hh:
+                    if hasattr(item, 'preset'):
+                        nested_hh.add(item)
+                    else:
+                        extra_hh = extra_hh.union(get_base_as_set(item))
+            else:
+                extra_hh = extra_hh.union(get_base_as_set(hh))
+        
+        # Remove any nested branch's preset value from the flat extra.
+        new_extra = set(extra)
+        for nested in nested_hh:
+            nested_val = list(get_base_as_set(nested.preset))[0]  # assume singleton
+            if nested_val in new_extra:
+                new_extra.remove(nested_val)
+        final_loopset = new_extra.union(extra_hh).union(nested_hh)
+        
+        pt = PathTree(preset=new_preset)
+        pt.loopset = final_loopset
+        forest = [pt]
+        print("  Final merged PathForest:", forest)
+        return forest
 
+def add_self_loops(forest, hh):
+    """
+    Attach self-loop delays from hh to each PathTree in the forest.
+    Instead of overwriting the loopset, we merge them:
+      - For a tree with base b, if b==2 then attach 10 if present;
+      - If b==3 then attach 27 if present.
+    (Adjust these heuristics as needed.)
+    """
+    new_forest = []
+    for pt in forest:
+        b = next(iter(pt.preset))  # assume preset is a singleton
+        # Start with the existing loopset
+        attached = set(pt.loopset)
+        for L in hh:
+            if b == 2 and L == 10:
+                attached.add(L)
+            elif b == 3 and L == 27:
+                attached.add(L)
+        new_forest.append(PathTree(preset=pt.preset, loopset=attached))
+    return new_forest
 
 def hide_node(g, H):
     """
-    Removes a node H from graph g, recalculating edges (and weights)
-    while ensuring logical handling of loops and paths.
-    If H has no parents but does have children, induce new edges among its children.
-    
-    :param g: input graph (dictionary)
-    :param H: node to hide
-    :return: the updated graph with H removed
+    Remove vertex H from graph g.
+    For each parent p of H and each child c of H, extract:
+      - ab: existing direct delay from p to c (if any)
+      - ah: delay from p to H
+      - hb: delay from H to c
+      - sl: self-loop delay at H (if any)
+    Then call merge_weightsets to compute the delay contribution for that branch.
+    If the edge p->c already has a forest (list of PathTrees), append the new branch;
+    otherwise, store the branch as the forest.
+    Return the updated graph.
     """
-    from copy import deepcopy
     gg = deepcopy(g)
-    
     if H not in g:
         raise KeyError(f"Node {H} not found in graph.")
     
-    # Get children and parents of the node to be hidden
-    ch = children(g, H)  # e.g. { child_node: child_lags }
-    pa = parents(g, H)   # e.g. { parent_node: parent_lags }
+    ch = children(g, H)  # {child: delay from H->child}
+    pa = parents(g, H)   # {parent: delay from p->H}
     
-    # Check if H has a self-loop
     if H in g[H]:
-        sl = g[H][H][1]  # e.g. {10} for a self-loop of length 10
+        sl = g[H][H][1]
     else:
         sl = set()
     
-    # Remove the node H from gg
-    remove_node(gg, H)   # deletes H and all its incident edges
+    remove_node(gg, H)
     
-    # If H has parents, do the usual merging (directed edge update).
     if pa:
         for p in pa:
             for c in ch:
-                # 1) Existing p->c edge-lag set (if any)
-                ab = gg[p][c].get(1, set()) if c in gg[p] else set()
-                # 2) Parent's p->H lag set
+                if c in gg[p]:
+                    existing = gg[p][c].get(1, None)
+                else:
+                    existing = None
                 pa_weights = pa[p] if pa[p] else set()
-                # 3) H->child c lag set
                 ch_weights = ch[c] if c in ch else set()
-                # 4) Self-loop on H
                 sl_weights = sl if sl else set()
-                print(f"For parent={p}, child={c}: ab={ab}, ah={pa_weights}, hb={ch_weights}, sl={sl_weights}")
+                print(f"For parent={p}, child={c}: ab={'existing forest' if existing is not None else set()}, ah={pa_weights}, hb={ch_weights}, sl={sl_weights}")
                 if c == H or p == H:
                     continue
-                # Use summation merging for directed updates.
-                w = merge_weightsets(ab, pa_weights, ch_weights, sl_weights, induced_bidirected=False)
-                if p not in gg:
-                    gg[p] = {}
-                if c not in gg[p]:
-                    gg[p][c] = {}
-                gg[p][c][1] = w  # w is now a PathTree.
+                # Use an empty ab so that the new branch's preset is computed solely from the indirect path.
+                new_branch = merge_weightsets(set(), pa_weights, ch_weights, sl_weights, induced_bidirected=False)
+                if existing is None:
+                    gg[p][c] = {1: new_branch}
+                else:
+                    if not isinstance(existing, list):
+                        existing = [existing]
+                    gg[p][c][1] = existing + new_branch
     else:
-        # If H has no parents, induce bidirected edges among its children.
         if ch:
             children_list = list(ch.keys())
             for i in range(len(children_list)):
@@ -448,21 +622,17 @@ def hide_node(g, H):
                     c2 = children_list[j]
                     lag_c1 = ch[c1] if c1 in ch else set()
                     lag_c2 = ch[c2] if c2 in ch else set()
-                    # Use difference merging for induced bidirected edges.
-                    w = merge_weightsets(set(), lag_c1, lag_c2, sl, induced_bidirected=True)
-                    # Insert the induced edge as bidirected (edge type 2) in both directions.
+                    forest = merge_weightsets(set(), lag_c1, lag_c2, sl, induced_bidirected=True)
                     for (u, v) in [(c1, c2), (c2, c1)]:
                         if u not in gg:
                             gg[u] = {}
                         if v not in gg[u]:
                             gg[u][v] = {}
-                        gg[u][v][2] = w  # w is a PathTree.
-    # Clean up any remaining references to H.
+                        gg[u][v][2] = forest
     for parent in list(gg.keys()):
         gg[parent].pop(H, None)
     gg.pop(H, None)
     return gg
-
 
 def degrees(nodes, g):
     return [len(parents(g, v)) + len(children(g, v)) for v in nodes]

@@ -425,10 +425,10 @@ def sum_forests(f1, f2):
     """
     new_forest = []
     for pt1 in f1:
-        bases1 = base_as_set(pt1.preset)
+        bases1 = get_base_as_set(pt1.preset)
         loops1 = set(pt1.loopset)
         for pt2 in f2:
-            bases2 = base_as_set(pt2.preset)
+            bases2 = get_base_as_set(pt2.preset)
             loops2 = set(pt2.loopset)
             s = osumset_full(bases1, bases2)
             if 0 in s:
@@ -445,10 +445,10 @@ def unify_forests(f1, f2):
     """
     new_forest = f1[:]
     for pt2 in f2:
-        base2 = base_as_set(pt2.preset)
+        base2 = get_base_as_set(pt2.preset)
         inserted = False
         for pt1 in new_forest:
-            base1 = base_as_set(pt1.preset)
+            base1 = get_base_as_set(pt1.preset)
             if base1 == base2:
                 pt1.loopset.update(pt2.loopset)
                 inserted = True
@@ -460,62 +460,39 @@ def unify_forests(f1, f2):
 def merge_weightsets(ab, ah, hb, hh, induced_bidirected=False):
     """
     Combine delay contributions from parent->H (ah) and H->child (hb) and incorporate 
-    self-loop delays at H (hh), returning a path-forest (a list containing one PathTree)
-    with a separated preset (the cycle-free delay) and a hierarchical loopset.
-    
-    Parameters:
-      ab: Existing direct edge delay from parent to child (int, set, or PathTree/forest).
-      ah: Delay from parent to H (int, set, or PathTree/forest).
-      hb: Delay from H to child (int, set, or PathTree/forest).
-      hh: Self-loop delay at H. It can be a set/int (flat) or a list that may include nested
-          PathTree objects (for nested cycles).
-      induced_bidirected: If True, perform difference merging (not our current case).
-      
-    For the non-induced case:
-      1. Convert ah and hb to sets (ah_set and hb_set) via get_base_as_set.
-      2. Compute the indirect delay as indirect = osumset_full(ah_set, hb_set) and remove 0.
-      3. Let direct = get_base_as_set(ab). If direct is empty, then new_preset = indirect and extra = {}.
-         Otherwise, new_preset = direct and extra = (indirect - direct).
-      4. Process hh:
-         - If hh is a list, separate items that are PathTrees (nested branches) from flat delays.
-         - Let extra_hh be the union of the flat items (using get_base_as_set).
-         - Let nested_hh be the set of nested PathTree objects.
-         - For each nested branch, remove its preset (assumed to be a singleton) from the flat extra (if present).
-      5. Set final_loopset = extra ∪ extra_hh ∪ nested_hh.
-    
-    Returns a forest (list containing one PathTree) with:
-      preset = new_preset,
-      loopset = final_loopset.
+    self-loop delays at H (hh), returning a path-forest (a list of PathTrees) with:
+      - preset = sum of delays (possibly from a direct edge if available), and 
+      - loopset = union of extra delays (from indirect paths and self-loops).
     """
-    # Convert ah and hb to sets.
-    if isinstance(ah, list):
-        ah_set = set().union(*(get_base_as_set(pt.preset) for pt in ah))
-    else:
-        ah_set = get_base_as_set(ah)
-    if isinstance(hb, list):
-        hb_set = set().union(*(get_base_as_set(pt.preset) for pt in hb))
-    else:
-        hb_set = get_base_as_set(hb)
+    from pathtree import PathTree
+    # Convert ah and hb into forests.
+    ah_forest = to_path_forest(ah)
+    hb_forest = to_path_forest(hb)
     
     if induced_bidirected:
-        new_base = {y - x for x in ah_set for y in hb_set}
-        pt = PathTree(preset=new_base)
-        pt.loopset = set()
+        new_base = {y - x for pt1 in ah_forest for x in get_base_as_set(pt1.preset)
+                           for pt2 in hb_forest for y in get_base_as_set(pt2.preset)}
+        pt = PathTree(preset=new_base, loopset=set())
         forest = [pt]
         print("Final merged PathForest:", forest)
         return forest
     else:
-        indirect = osumset_full(ah_set, hb_set)
-        if 0 in indirect:
-            indirect.discard(0)
-        print("  Indirect paths (sum of ah and hb):", indirect)
+        # Instead of summing just the presets, use sum_forests so that the loopset info is preserved.
+        indirect_forest = sum_forests(ah_forest, hb_forest)
+        # If multiple branches result, merge them into one using unify_forests.
+        if len(indirect_forest) > 1:
+            indirect_forest = unify_forests(indirect_forest, [])
+        pt_indirect = indirect_forest[0]
+        new_preset = pt_indirect.preset  # Combined preset (including any sums from ah and hb)
+        
+        # If a direct edge delay exists, add it to every branch.
         direct = get_base_as_set(ab)
-        if not direct:
-            new_preset = indirect
-            extra = set()
-        else:
-            new_preset = direct
-            extra = indirect - direct
+        if direct:
+            new_presets = set()
+            for d in direct:
+                for b in get_base_as_set(new_preset):
+                    new_presets.add(d + b)
+            new_preset = new_presets
         
         # Process self-loop delays (hh)
         extra_hh = set()     # flat self-loop delays
@@ -530,20 +507,13 @@ def merge_weightsets(ab, ah, hb, hh, induced_bidirected=False):
             else:
                 extra_hh = extra_hh.union(get_base_as_set(hh))
         
-        # Remove any nested branch's preset value from the flat extra.
-        new_extra = set(extra)
-        for nested in nested_hh:
-            nested_val = list(get_base_as_set(nested.preset))[0]  # assume singleton
-            if nested_val in new_extra:
-                new_extra.remove(nested_val)
-        final_loopset = new_extra.union(extra_hh).union(nested_hh)
+        # Combine the self-loop delays with those already in the indirect forest.
+        final_loopset = pt_indirect.loopset.union(extra_hh).union(nested_hh)
         
-        pt = PathTree(preset=new_preset)
-        pt.loopset = final_loopset
-        forest = [pt]
+        pt_final = PathTree(preset=new_preset, loopset=final_loopset)
+        forest = [pt_final]
         print("  Final merged PathForest:", forest)
         return forest
-
 def add_self_loops(forest, hh):
     """
     Attach self-loop delays from hh to each PathTree in the forest.
@@ -671,11 +641,6 @@ def print_ws(ws):
     for e in ws:
         print (e, ', ')
     print ('}')
-
-
-# def test_osumnum():
-#     assert osumnum(set(range(5)), 1) == set(range(1, 5 + 1))
-
 
 def testcase(n):
     g1 = {1: {2: {1: {1}}, 4: {1: {1}}},

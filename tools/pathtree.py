@@ -76,30 +76,11 @@ def osumnum(s, num):
 
 def osumset(*sets):
     """
-    Compute the sum of multiple sets or InfiniteExpressions.
-    Ensures finite numbers are summed first before merging with multiple independent InfiniteExpressions.
+    Compute the sum of multiple sets or InfiniteExpression objects.
+    Performs a cartesian sum of all inputs, correctly combining InfiniteExpression instances.
     """
-    finite_sum = 0
-    infinite_expression = InfiniteExpression(0)  # Initialize for infinite terms
-
-    for s in sets:
-        print(f"Processing set: {s}")  # Debugging step
-        if isinstance(s, InfiniteExpression):
-            infinite_expression += s  # Correctly sum infinite expressions
-        elif isinstance(s, set):
-            for x in s:
-                if isinstance(x, InfiniteExpression):
-                    infinite_expression += x  # Add infinite terms properly
-                elif isinstance(x, int):  # Sum finite terms normally
-                    finite_sum += x
-                elif isinstance(x, str):
-                    raise TypeError(f"osumset() received an unexpected string: {x}")
-                else:
-                    raise TypeError(f"osumset() received an unexpected type: {type(x)} ({x})")
-
-    # Return the final expression as an InfiniteExpression object
-    final_expr = InfiniteExpression(finite_sum) + infinite_expression
-    return {final_expr}  # Return as an object, not a string
+    # Delegate to the full cartesian-sum implementation
+    return osumset_full(*sets)
 
 def osumset_full(*sets):
     # Start with a result that contains only 0.
@@ -169,8 +150,17 @@ class PathTree:
         else:
             preset_str = str(self.preset)
         if self.loopset:
-            loopset_str = "<" + ', '.join([str(x) for x in self.loopset]) + ">"
+            loopset_items = []
+            for x in self.loopset:
+                # If x is a flat PathTree, show only its preset.
+                if isinstance(x, PathTree) and not x.loopset and isinstance(x.preset, set) and len(x.preset) == 1:
+                    loopset_items.append(str(next(iter(x.preset))))
+                else:
+                    loopset_items.append(str(x))
+            loopset_str = "<" + ', '.join(loopset_items) + ">"
             return f"({preset_str}, {loopset_str})"
+            # loopset_str = "<" + ', '.join([str(x) for x in self.loopset]) + ">"
+            # return f"({preset_str}, {loopset_str})"
         else:
             return f"({preset_str})"
     

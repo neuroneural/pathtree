@@ -40,6 +40,7 @@ for i in range(N):
     e = []
     for j in range(N):
         e.append(solver.IntVar(0,1,"%i -> %i" % (i,j)))
+        #e.append(solver.IntVar(0,1))
     edges.append(e)
 
 # path constraint

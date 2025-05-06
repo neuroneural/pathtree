@@ -81,11 +81,13 @@ def bcliques(g, verbose=False):
         e = []
         for j in range(N):
             e.append(solver.IntVar(0, 1, "%i -> %i" % (i, j)))
+            #e.append(solver.IntVar(0, 1))
         edges.append(e)
 
     parents = [solver.IntVar(0, 1, "%i" % (i)) for i in range(N)]
+    #parents = [solver.IntVar(0, 1) for i in range(N)]
     children = [solver.IntVar(0, 1, "%i" % (i)) for i in range(N)]
-
+    #children = [solver.IntVar(0, 1) for i in range(N)]
     # declare constraints
     clique_constrain(solver, parents, children, edges, g)
 

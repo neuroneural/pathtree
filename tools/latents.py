@@ -1,4 +1,3 @@
-
 import sys, os
 
 sys.path.append('./tools/')
@@ -9,9 +8,9 @@ import numpy as np
 from random import shuffle
 
 from copy import deepcopy
-from pathtree import PathTree, osumset, osumset_full, InfiniteExpression
-from pathtreetools import apply_minimal_refinement
-from infiniteset import InfiniteSet
+from latentsb import bpts
+from pathtree import PathTree, osumset_full
+from pathtreetools import find_maximal_bcliques, full_backward_inference, to_path_forest, forest_to_set
 
 g_var_counter = 0
 
@@ -26,36 +25,42 @@ def get_fresh_loop_var():
     var_name = chr(97 + g_var_counter)
     g_var_counter += 1
     return var_name
+def apply_batch_pts(raw_graph, observed_nodes):
+    return full_backward_inference(raw_graph, observed_nodes)
+# def apply_batch_pts(raw_graph, observed_nodes):
+#     """
+#     1) Repeatedly:
+#        a) find all maximal b-cliques over the *current* graph
+#        b) call bpts() on each clique → get {(u,v): PathTree}
+#        c) write each PathTree back into G[u][v]
+#        d) hide every node not in observed_nodes via hide_node()
+#     until nothing changes.
+#     """
+#     G = deepcopy(raw_graph)
+#     converged = False
+#     iteration = 0
 
-def apply_batch_pts(g):
-    """
-    Applies the Batch PTS algorithm to refine the graph's edge-lag sets iteratively.
-    :param g: Input graph
-    :return: Refined graph
-    """
-    converged = False
-    iteration = 0
+#     while not converged:
+#         print(f"Starting iteration {iteration}…")
+#         prev = deepcopy(G)
 
-    while not converged:
-        print(f"Starting iteration {iteration}...")
-        
-        # Take a snapshot of the edge-lag sets
-        prev_edge_lags = {v: {w: g[v][w][1] for w in g[v]} for v in g}
+#         # refine every clique
+#         for bc in find_maximal_bcliques(G):
+#             refined = bpts(G, bc)
+#             for (u,v), pt in refined.items():
+#                 et = 1 if 1 in G[u][v] else 2
+#                 G[u][v] = {et: pt}
 
-        # Apply the refinement process
-        refined_graph = apply_minimal_refinement(g)
+#         # hide all latents in one pass
+#         latents = [n for n in G if n not in observed_nodes]
+#         for H in latents:
+#             G = hide_node(G, H)
 
-        # Compare current edge-lag sets with the previous snapshot
-        current_edge_lags = {v: {w: refined_graph[v][w][1] for w in refined_graph[v]} for v in refined_graph}
+#         converged = (G == prev)
+#         iteration += 1
 
-        if prev_edge_lags == current_edge_lags:
-            converged = True
-        else:
-            g = refined_graph
-            iteration += 1
-
-    print("Converged after", iteration, "iterations.")
-    return refined_graph
+#     print("Converged after", iteration, "iterations.")
+#     return G
 
 def find_crd_paths(graph, source, target):
     """
@@ -197,60 +202,96 @@ def bidirected_forest(ah_forest, hb_forest):
     """
     new_forest = []
     for pt1 in ah_forest:
-        bases1 = base_as_set(pt1.preset)
+        bases1 = get_base_as_set(pt1.preset)
         for pt2 in hb_forest:
-            bases2 = base_as_set(pt2.preset)
+            bases2 = get_base_as_set(pt2.preset)
             for x in bases1:
                 for y in bases2:
-                    diff_val = y - x
+                    diff_val = abs(y - x)
                     new_forest.append(PathTree(preset={diff_val}, loopset=set()))
     return new_forest
 
 def update_bidirected_edges(graph, r):
     """
     Update bi-directed edges when removing a latent node 'r'.
-    Recalculate lags between parents and children of 'r'.
+    Recalculate lags between parents and children of 'r' by taking the
+    difference in lags, then store the final edge under whichever node
+    has the smaller lag (the "closer" node), pointing to the "further" node.
 
-    :param graph: The graph as a dictionary.
-    :param r: The node to be removed.
-    :return: The updated graph.
+    This ensures that if node 1->2 has lag=6 and node 1->3 has lag=7,
+    node 2 is closer (6 < 7), so we store final '2 <-> 3 = (1)', not '3 <-> 2'.
     """
-    # Ensure 'r' exists in the graph
+
+    # If 'r' doesn't exist, just return
     if r not in graph:
         print(f"Skipping Node {r}: It does not exist in the graph.")
         return graph
 
-    # Safely retrieve parents and children of node `r` related to bi-directed edges
-    parents_r = {p: graph[p][r].get(2, set()) for p in graph if r in graph[p] and 2 in graph[p][r]}
-    children_r = {c: graph[r][c].get(2, set()) for c in graph.get(r, {})}
+    # Identify which nodes connect bidirectionally to 'r'
+    parents_r = {
+        p: graph[p][r].get(2, set())
+        for p in graph
+        if (r in graph[p]) and (2 in graph[p][r])
+    }
+    children_r = {
+        c: graph[r][c].get(2, set())
+        for c in graph.get(r, {})
+    }
 
-    # Debugging output
     print(f"Node to Remove: {r}")
     print(f"Parents of {r} (Bi-directed): {parents_r}")
     print(f"Children of {r} (Bi-directed): {children_r}")
 
     updated_graph = deepcopy(graph)
 
-    # Remove the latent node `r`
+    # Remove 'r' itself from the adjacency
     if r in updated_graph:
         del updated_graph[r]
 
+    # For each (p, c) pair, we produce a correlation p <-> c
+    # by taking the difference in lags: abs(lp - lc)
     for p in parents_r:
         for c in children_r:
-            combined_lags = osumset_full(parents_r[p], children_r[c])
+            # Collect all differences
+            diff_lags = {
+                abs(lp - lc)
+                for lp in parents_r[p]
+                for lc in children_r[c]
+            }
 
-            if p == c:  # Self-loop case
+            if p == c:
+                # Self-loop scenario
                 if p in updated_graph and p in updated_graph[p]:
-                    updated_graph[p][p][2].update(combined_lags)
+                    updated_graph[p][p].setdefault(2, set()).update(diff_lags)
                 else:
-                    updated_graph.setdefault(p, {})[p] = {2: combined_lags}
-            else:  # Regular edge case
-                if c in updated_graph[p]:
-                    updated_graph[p][c].setdefault(2, set()).update(combined_lags)
-                else:
-                    updated_graph[p][c] = {2: combined_lags}
+                    updated_graph.setdefault(p, {})[p] = {2: diff_lags}
+                continue
 
-    # Clean up remaining references to `r` in the graph
+            # Decide which node is "closer" to r
+            # We'll compare the MAX of each node's lag set. Whichever is smaller is 'closer'.
+            max_p = max(parents_r[p]) if parents_r[p] else 0
+            max_c = max(children_r[c]) if children_r[c] else 0
+
+            if max_p < max_c:
+                # p is closer => store p->c
+                closer, further = p, c
+            elif max_c < max_p:
+                # c is closer or they tie => store c->p
+                closer, further = c, p
+            else:
+                # tie — pick the lexicographically smaller node as “closer”
+                if str(p) < str(c):
+                    closer, further = p, c
+                else:
+                    closer, further = c, p
+            # Insert the final bidirected edge in updated_graph[closer][further][2]
+            if closer not in updated_graph:
+                updated_graph[closer] = {}
+            if further not in updated_graph[closer]:
+                updated_graph[closer][further] = {}
+            updated_graph[closer][further].setdefault(2, set()).update(diff_lags)
+
+    # Clean up references to r
     for node in list(updated_graph.keys()):
         if r in updated_graph[node]:
             del updated_graph[node][r]
@@ -368,54 +409,27 @@ def iterate_pt(pt):  # iterate over a path tree
         starts.append([e.preset, iterate_ws(e.loopset)])
     return starts
 
-def to_path_forest(x):
-    """
-    Convert x into a list of PathTrees (a path-forest).
-    If x is:
-      - an int: return [PathTree(preset={x}, loopset=set())]
-      - a set: return [PathTree(preset={b}, loopset=set()) for each b in x]
-      - a PathTree: return [x]
-      - a list (of PathTrees): return x
-    """
-    if isinstance(x, list):
-        return x
-    elif isinstance(x, PathTree):
-        return [x]
-    elif isinstance(x, int):
-        return [PathTree(preset={x}, loopset=set())]
-    elif isinstance(x, set):
-        return [PathTree(preset={b}, loopset=set()) for b in x]
-    elif x == set():
-        return []
-    else:
-        raise TypeError(f"Cannot convert {x} into a path-forest")
-
 def get_base_as_set(x):
     """
-    Convert x into a set of ints.
-      - If x is an int, return {x}.
-      - If x is a set, return it.
-      - If x is a list, return the union over its elements.
-      - If x is a PathTree, return its preset (assumed to be int or set).
+    Recursively converts x (which may be an int, a set, a list, or a PathTree)
+    into a plain set of integers.
+    If x is an int, return {x}.
+    If x is a list or set, flatten each element.
+    If x is a PathTree, recurse on its preset.
     """
-    if isinstance(x, list):
+    if isinstance(x, int):
+        return {x}
+    elif isinstance(x, (list, set)):
         result = set()
         for item in x:
-            result = result.union(get_base_as_set(item))
+            result |= get_base_as_set(item)
         return result
-    elif isinstance(x, set):
-        return x
-    elif isinstance(x, int):
-        return {x}
     elif isinstance(x, PathTree):
-        if isinstance(x.preset, int):
-            return {x.preset}
-        elif isinstance(x.preset, set):
-            return x.preset
-        else:
-            raise TypeError("Unexpected type for PathTree.preset")
+        # We assume that x.preset is either an int or a set or list.
+        return get_base_as_set(x.preset)
     else:
-        raise TypeError("get_base_as_set expects an int, set, list, or PathTree")
+        raise TypeError(f"get_base_as_set expects an int, list, set, or PathTree, got {type(x)}")
+
     
 def sum_forests(f1, f2):
     """
@@ -464,13 +478,12 @@ def merge_weightsets(ab, ah, hb, hh, induced_bidirected=False):
       - preset = sum of delays (possibly from a direct edge if available), and 
       - loopset = union of extra delays (from indirect paths and self-loops).
     """
-    from pathtree import PathTree
     # Convert ah and hb into forests.
     ah_forest = to_path_forest(ah)
     hb_forest = to_path_forest(hb)
     
     if induced_bidirected:
-        new_base = {y - x for pt1 in ah_forest for x in get_base_as_set(pt1.preset)
+        new_base = {abs(y - x) for pt1 in ah_forest for x in get_base_as_set(pt1.preset)
                            for pt2 in hb_forest for y in get_base_as_set(pt2.preset)}
         pt = PathTree(preset=new_base, loopset=set())
         forest = [pt]
@@ -512,7 +525,7 @@ def merge_weightsets(ab, ah, hb, hh, induced_bidirected=False):
         
         pt_final = PathTree(preset=new_preset, loopset=final_loopset)
         forest = [pt_final]
-        print("  Final merged PathForest:", forest)
+        print("Final merged PathForest:", forest)
         return forest
 def add_self_loops(forest, hh):
     """
@@ -534,34 +547,112 @@ def add_self_loops(forest, hh):
                 attached.add(L)
         new_forest.append(PathTree(preset=pt.preset, loopset=attached))
     return new_forest
+def flatten_to_ints(obj):
+    """
+    Recursively flatten obj (which may be an int, a PathTree, or a set/list of them)
+    into a plain set of integers. If a PathTree has preset = {6}, we add 6, etc.
+    """
+    results = set()
 
+    # If obj is None or empty, return an empty set
+    if not obj:
+        return results
+
+    # If obj is a single item, wrap it in a list for uniform handling
+    if isinstance(obj, (int, PathTree, set, list)):
+        items = obj if isinstance(obj, (set, list)) else [obj]
+    else:
+        # Not a known type => skip or raise error
+        return results
+
+    for item in items:
+        # If int, just add it
+        if isinstance(item, int):
+            results.add(item)
+
+        # If a PathTree => flatten its preset
+        elif isinstance(item, PathTree):
+            # item.preset might be an int or a set of ints
+            if isinstance(item.preset, int):
+                results.add(item.preset)
+            elif isinstance(item.preset, set):
+                # add them all
+                for val in item.preset:
+                    if isinstance(val, int):
+                        results.add(val)
+                    # If val is another PathTree, you could even go deeper
+            # If you want to handle item.loopset, do so as well
+            # but if it's empty, that's fine.
+
+        # If item is a set => flatten that recursively
+        elif isinstance(item, set):
+            results |= flatten_to_ints(item)
+
+        # If item is a list => flatten that recursively
+        elif isinstance(item, list):
+            results |= flatten_to_ints(item)
+
+        # else skip or raise TypeError
+
+    return results
+
+
+def merge_forest_by_base(forest):
+    """
+    Given a list of PathTree objects (forest), merge contributions that have the same
+    (flattened) preset (assumed to be a singleton) by taking the union of their loopsets.
+    
+    For example, if forest contains two PathTrees both with preset {10} (and maybe differing
+    loopsets), the result will be one PathTree with preset {10} and loopset equal to the union
+    of the two loopsets.
+    """
+    merged = {}  # key: base (int), value: union of loopset contributions (a set)
+    for pt in forest:
+        bases = get_base_as_set(pt.preset)  # flattened preset as a plain set of ints
+        loops = flatten_to_ints(pt.loopset)
+
+        # We assume each contribution is for a single base.
+        for b in bases:
+            loops = flatten_to_ints(pt.loopset)
+            if b in merged:
+                merged[b].update(loops)
+            else:
+                merged[b] = set(loops)
+    result = [] 
+    for b, ls in merged.items():
+        result.append(PathTree(preset={b}, loopset=loops))
+    return result
 def hide_node(g, H):
     """
     Remove vertex H from graph g.
-    For each parent p of H and each child c of H, extract:
-      - ab: existing direct delay from p to c (if any)
-      - ah: delay from p to H
-      - hb: delay from H to c
-      - sl: self-loop delay at H (if any)
-    Then call merge_weightsets to compute the delay contribution for that branch.
-    If the edge p->c already has a forest (list of PathTrees), append the new branch;
-    otherwise, store the branch as the forest.
-    Return the updated graph.
+    1. For each parent p of H and each child c of H, update directed edges p -> c 
+       using merge_weightsets.
+    2. Then, regardless of whether H has observed parents, induce bidirected edges among
+       every pair (c1, c2) of children of H. For each pair, compute the induced bidirected
+       edge using merge_weightsets with induced_bidirected=True, then use flatten_to_ints
+       to decide which node is 'closer' (i.e. has the smaller maximum delay when flattened)
+       so that the edge is stored as: closer -> further under key 2.
+    3. Clean up all references to H.
     """
     gg = deepcopy(g)
     if H not in g:
         raise KeyError(f"Node {H} not found in graph.")
-    
-    ch = children(g, H)  # {child: delay from H->child}
-    pa = parents(g, H)   # {parent: delay from p->H}
-    
+
+    # Children of H: dictionary {child: delay from H->child}
+    ch = children(g, H)
+    # Parents of H: dictionary {parent: delay from p->H}
+    pa = parents(g, H)
+
+    # Self-loop at H:
     if H in g[H]:
         sl = g[H][H][1]
     else:
         sl = set()
-    
+
+    # Remove H from gg first.
     remove_node(gg, H)
-    
+
+    # --- Branch 1: Update directed edges from observed parents of H to each child c ---
     if pa:
         for p in pa:
             for c in ch:
@@ -569,39 +660,76 @@ def hide_node(g, H):
                     existing = gg[p][c].get(1, None)
                 else:
                     existing = None
+
                 pa_weights = pa[p] if pa[p] else set()
                 ch_weights = ch[c] if c in ch else set()
                 sl_weights = sl if sl else set()
-                print(f"For parent={p}, child={c}: ab={'existing forest' if existing is not None else set()}, ah={pa_weights}, hb={ch_weights}, sl={sl_weights}")
+
+                print(f"For parent={p}, child={c}: existing={bool(existing)}, ah={pa_weights}, hb={ch_weights}, sl={sl_weights}")
+
                 if c == H or p == H:
                     continue
-                # Use an empty ab so that the new branch's preset is computed solely from the indirect path.
+
                 new_branch = merge_weightsets(set(), pa_weights, ch_weights, sl_weights, induced_bidirected=False)
+
                 if existing is None:
                     gg[p][c] = {1: new_branch}
                 else:
                     if not isinstance(existing, list):
                         existing = [existing]
-                    gg[p][c][1] = existing + new_branch
-    else:
-        if ch:
-            children_list = list(ch.keys())
-            for i in range(len(children_list)):
-                for j in range(i+1, len(children_list)):
-                    c1 = children_list[i]
-                    c2 = children_list[j]
-                    lag_c1 = ch[c1] if c1 in ch else set()
-                    lag_c2 = ch[c2] if c2 in ch else set()
-                    forest = merge_weightsets(set(), lag_c1, lag_c2, sl, induced_bidirected=True)
-                    for (u, v) in [(c1, c2), (c2, c1)]:
-                        if u not in gg:
-                            gg[u] = {}
-                        if v not in gg[u]:
-                            gg[u][v] = {}
-                        gg[u][v][2] = forest
-    for parent in list(gg.keys()):
-        gg[parent].pop(H, None)
-    gg.pop(H, None)
+                    combined = existing + new_branch
+                    combined = merge_forest_by_base(combined)
+                    gg[p][c][1] = combined
+
+    # --- Branch 2: Always induce bidirected edges among all pairs of children of H ---
+    if ch and (len(ch) > 1):
+        children_list = list(ch.keys())
+        for i in range(len(children_list)):
+            for j in range(i + 1, len(children_list)):
+                c1 = children_list[i]
+                c2 = children_list[j]
+
+                lag_c1 = ch[c1] if c1 in ch else set()
+                lag_c2 = ch[c2] if c2 in ch else set()
+
+                # Flatten delay sets into plain ints.
+                f_c1 = flatten_to_ints(lag_c1)
+                f_c2 = flatten_to_ints(lag_c2)
+
+                # Compute the induced bidirected edge using merge_weightsets with induced_bidirected=True.
+                forest = merge_weightsets(set(), lag_c1, lag_c2, sl, induced_bidirected=True)
+
+                # Decide which child is "closer" (smaller max delay) after flattening.
+                max_c1 = max(f_c1) if f_c1 else 0
+                max_c2 = max(f_c2) if f_c2 else 0
+
+                if max_c1 < max_c2:
+                    closer, further = c1, c2
+                elif max_c2 < max_c1:
+                    closer, further = c2, c1
+                else:
+                    # tie — pick lexicographically smaller node as “closer”
+                    if str(c1) < str(c2):
+                        closer, further = c1, c2
+                    else:
+                        closer, further = c2, c1
+                if closer not in gg:
+                    gg[closer] = {}
+                if further not in gg[closer]:
+                    gg[closer][further] = {}
+
+                # Store the induced bidirected edge as a list.
+                gg[closer][further].setdefault(2, [])
+                gg[closer][further][2].extend(forest)
+                gg[closer][further][2] = merge_forest_by_base(gg[closer][further][2])
+
+    # Cleanup: remove any leftover references to H in the graph.
+    for node in list(gg.keys()):
+        if H in gg[node]:
+            del gg[node][H]
+    if H in gg:
+        del gg[H]
+
     return gg
 
 def degrees(nodes, g):
@@ -642,98 +770,3 @@ def print_ws(ws):
         print (e, ', ')
     print ('}')
 
-def testcase(n):
-    g1 = {1: {2: {1: {1}}, 4: {1: {1}}},
-          2: {3: {1: {1}}, 7: {1: {1}}},
-          3: {},
-          4: {5: {1: {1}}},
-          5: {3: {1: {1}}, 6: {1: {1}}},
-          6: {5: {1: {1}}},
-          7: {8: {1: {1}}},
-          8: {2: {1: {1}}}}
-
-    g2 = {1: {2: {1: {1}}},
-          2: {3: {1: {1}}, 6: {1: {1}}},
-          3: {4: {1: {1}}},
-          4: {5: {1: {1}}},
-          5: {},
-          6: {7: {1: {1}}},
-          7: {3: {1: {1}}}}
-
-    g3 = {1: {2: {1: {1}}},
-          2: {3: {1: {1}}, 6: {1: {1}}},
-          3: {4: {1: {1}}, 8: {1: {1}}},
-          4: {5: {1: {1}}},
-          5: {},
-          6: {7: {1: {1}}},
-          7: {2: {1: {1}}},
-          8: {9: {1: {1}}},
-          9: {10: {1: {1}}},
-          10: {11: {1: {1}}},
-          11: {3: {1: {1}}}}
-
-    g4 = {1: {2: {1: {1}}},
-          2: {3: {1: {1}}, 4: {1: {1}}},
-          4: {5: {1: {1}}},
-          5: {6: {1: {1}}, 7: {1: {1}}},
-          6: {2: {1: {1}}},
-          7: {8: {1: {1}}},
-          8: {5: {1: {1}}},
-          3: {}}
-
-    g5 = {1: {2: {1: {1}}},
-          2: {3: {1: {1}}, 4: {1: {1}}},
-          4: {5: {1: {1}}},
-          5: {6: {1: {1}}, 7: {1: {1}}},
-          6: {2: {1: {1}}},
-          7: {8: {1: {1}}},
-          8: {5: {1: {1}}},
-          3: {9: {1: {1}}},
-          9: {10: {1: {1}}, 11: {1: {1}}},
-          11: {9: {1: {1}}},
-          10: {}}
-
-    g6 = {1: {2: {1: {1}}},
-          2: {3: {1: {1}}, 4: {1: {1}}},
-          4: {5: {1: {1}}},
-          5: {6: {1: {1}}, 7: {1: {1}}},
-          6: {2: {1: {1}}, 6: {1: {1}}},
-          7: {8: {1: {1}}},
-          8: {5: {1: {1}}},
-          3: {9: {1: {1}}},
-          9: {10: {1: {1}}, 11: {1: {1}}},
-          11: {9: {1: {1}}},
-          10: {}}
-
-    g7 = {1: {2: {1: {1}}},
-          2: {3: {1: {1}}, 4: {1: {1}}},
-          4: {5: {1: {1}}},
-          5: {6: {1: {1}}, 7: {1: {1}}},
-          6: {2: {1: {1}}, 6: {1: {1}}},
-          7: {8: {1: {1}}, 7: {1: {1}}},
-          8: {5: {1: {1}}},
-          3: {9: {1: {1}}},
-          9: {10: {1: {1}}, 11: {1: {1}}},
-          11: {9: {1: {1}}},
-          10: {}}
-
-    g8 = {1: {2: {1: {1}}, 5: {1: {1}}},
-          2: {3: {1: {1}}, 2: {1: {1}}},
-          3: {4: {1: {1}}},
-          4: {8: {1: {1}}},
-          5: {6: {1: {1}}},
-          6: {7: {1: {1}}},
-          7: {4: {1: {1}}},
-          8: {9: {1: {1}}},
-          9: {9: {1: {1}}, 10: {1: {1}}},
-          10: {}}
-    
-    g9 ={
-        1: {2: {1: {1}}},                # Node 1 points to Node 2
-        2: {2: {1: {1}}, 3: {1: {1}}},   # Node 2 ↔ Node 3 (bi-directed), Node 2 → Node 4
-        3: {}                         # Node 5 is a sink
-        }
-
-    cases = [g1, g2, g3, g4, g5, g6, g7, g8, g9]
-
-    return fix_selfloops(cases[n])

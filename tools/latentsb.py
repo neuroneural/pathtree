@@ -3,10 +3,10 @@ import sys
 sys.path.append('./tools/')
 
 import bclique as bq
-import latents as lt
 import pathtreetools as ptt
 from pathtree import PathTree
-from pathtreetools import compute_edge_lags, growtree
+from pathtreetools import forest_to_set, to_path_forest, refine_edge
+from ortools.constraint_solver import pywrapcp
 
 
 class SolutionNotFoundInTime(Exception):
@@ -76,25 +76,98 @@ def convert_bclique(bc):
     # Return frozensets instead of regular sets.
     return (frozenset(V1), frozenset(V2))
 
-def bpts(graph, bclique):
-    # Convert bc to a tuple (V1, V2)
-    bc_converted = convert_bclique(bclique)
-    edge_lag_dict = compute_edge_lags(graph, bc_converted)
-    pts = set()
-    for edge in edge_lag_dict:
-        target_lags = edge_lag_dict[edge]
-        # If the target lag is already a PathTree, use it; otherwise, create one.
-        if isinstance(target_lags, PathTree):
-            pt = target_lags
-        else:
-            pt = PathTree(preset=min(target_lags, key=lambda x: x if isinstance(x, int) else float('inf')))
-        try:
-            learned_pt = learn_path_tree(pt, target_lags)
-            pts.add(learned_pt)
-        except ValueError as e:
-            print(e)
-            continue
-    return pts
+def bpts(graph, bclique, max_new_loops=2, maxloop=10):
+    """
+    Batch-PTS: refine all edges in one b-clique simultaneously,
+    sharing up to `max_new_loops` new latent loops L[k].
+    Returns a dict mapping (u,v) → refined PathTree.
+    """
+    solver = pywrapcp.Solver("batch_pts")
+    V1, V2 = bclique
+    edge_lag_dict: dict[tuple,str] = {}
+    for u in V1:
+        for v in V2:
+            raw = graph[u][v].get(1) or graph[u][v].get(2)
+            forest = to_path_forest(raw)
+            edge_lag_dict[(u,v)] = forest_to_set(forest)
+    edges = list(edge_lag_dict.items())  # [ ((u,v), E_uv), ... ]
+
+    # 1) Shared new‐loop vars
+    L = [solver.IntVar(1, maxloop, f"L[{k}]") for k in range(max_new_loops)]
+    #L = [solver.IntVar(1, maxloop) for k in range(max_new_loops)]
+    # 2) Per‐edge boolean weights for existing & new loops
+    w_ex, w_new = {}, {}
+    for (u,v), E in edges:
+        forest0 = to_path_forest(graph[u][v].get(1) or graph[u][v].get(2))
+        existing = [ (next(iter(pt.preset)) if isinstance(pt.preset, set)
+                       else pt.preset)
+                     for pt in forest0 ]
+
+        w_ex[(u,v)]  = [solver.IntVar(0,1, f"w_ex_{u}_{v}_{i}") 
+                         for i in range(len(existing))]
+        # w_ex[(u,v)]  = [solver.IntVar(0,1) 
+        #                  for i in range(len(existing))]
+        w_new[(u,v)] = [solver.IntVar(0,1, f"w_new_{u}_{v}_{k}") 
+                         for k in range(max_new_loops)]
+        # w_new[(u,v)] = [solver.IntVar(0,1) 
+        #                  for k in range(max_new_loops)]
+
+        # 3) build linearized “product” for new loops: p_k = L[k] * w_new[k]
+        M = maxloop
+        p_vars = []
+        for k, wv in enumerate(w_new[(u,v)]):
+            pk = solver.IntVar(0, M, f"p_{u}_{v}_{k}")
+            #pk = solver.IntVar(0, M)
+            solver.Add(pk <= L[k])
+            solver.Add(pk <= wv * M)
+            solver.Add(pk >= L[k] - (1 - wv) * M)
+            p_vars.append(pk)
+
+        # 4) sum up existing & new‐loop contributions
+        all_vars = w_ex[(u,v)] + p_vars
+        coeffs   = existing + [1]*len(p_vars)
+        sum_var  = solver.ScalProd(all_vars, coeffs)
+
+        # 5) enforce (sum_var + preset) ∈ E exactly
+        solver.Add(solver.MemberCt(sum_var + min(E), list(E)))
+
+    # 6) solve once
+    all_vars = L + sum(w_ex.values(), []) + sum(w_new.values(), [])
+    solution = solver.Assignment()
+    solution.Add(all_vars)
+    db = solver.Phase(all_vars,
+                      solver.CHOOSE_FIRST_UNBOUND,
+                      solver.ASSIGN_MIN_VALUE)
+    solver.NewSearch(db)
+    if not solver.NextSolution():
+        solver.EndSearch()
+        raise RuntimeError("No solution for b-clique")
+    # capture
+    L_vals     = [solution.Value(v)       for v in L]
+    w_ex_vals  = {e:[solution.Value(wv) for wv in w_ex[e]]  for e in w_ex}
+    w_new_vals = {e:[solution.Value(wv) for wv in w_new[e]] for e in w_new}
+    solver.EndSearch()
+
+    # 7) rebuild & refine a PathTree for each edge
+    out = {}
+    for (u,v), E in edges:
+        forest0 = to_path_forest(graph[u][v].get(1) or graph[u][v].get(2))
+        preset  = min(E)
+
+        # keep existing loops if solver didn’t turn them off
+        existing = [ (next(iter(pt.preset)) if isinstance(pt.preset, set)
+                        else pt.preset)
+                     for pt in forest0 ]
+        loops = { coef for coef, flag in zip(existing, w_ex_vals[(u,v)]) if flag == 0 }
+        # add any new loops the solver activated
+        loops |= { L_vals[k] for k, flag in enumerate(w_new_vals[(u,v)]) if flag == 1 }
+
+        # 2‐stage: build the raw tree, then *greedily* refine to cover *all* E
+        raw_pt  = PathTree(preset=preset, loopset=loops)
+        full_pt = refine_edge(raw_pt, E)
+
+        out[(u,v)] = full_pt
+    return list(out.values())
 
 def getagenerator(g):
     """

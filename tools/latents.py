@@ -25,42 +25,6 @@ def get_fresh_loop_var():
     var_name = chr(97 + g_var_counter)
     g_var_counter += 1
     return var_name
-def apply_batch_pts(raw_graph, observed_nodes):
-    return full_backward_inference(raw_graph, observed_nodes)
-# def apply_batch_pts(raw_graph, observed_nodes):
-#     """
-#     1) Repeatedly:
-#        a) find all maximal b-cliques over the *current* graph
-#        b) call bpts() on each clique → get {(u,v): PathTree}
-#        c) write each PathTree back into G[u][v]
-#        d) hide every node not in observed_nodes via hide_node()
-#     until nothing changes.
-#     """
-#     G = deepcopy(raw_graph)
-#     converged = False
-#     iteration = 0
-
-#     while not converged:
-#         print(f"Starting iteration {iteration}…")
-#         prev = deepcopy(G)
-
-#         # refine every clique
-#         for bc in find_maximal_bcliques(G):
-#             refined = bpts(G, bc)
-#             for (u,v), pt in refined.items():
-#                 et = 1 if 1 in G[u][v] else 2
-#                 G[u][v] = {et: pt}
-
-#         # hide all latents in one pass
-#         latents = [n for n in G if n not in observed_nodes]
-#         for H in latents:
-#             G = hide_node(G, H)
-
-#         converged = (G == prev)
-#         iteration += 1
-
-#     print("Converged after", iteration, "iterations.")
-#     return G
 
 def find_crd_paths(graph, source, target):
     """
@@ -622,7 +586,7 @@ def merge_forest_by_base(forest):
     for b, ls in merged.items():
         result.append(PathTree(preset={b}, loopset=loops))
     return result
-def hide_node(g, H):
+def hide_node(g, H, zero_incoming=False):
     """
     Remove vertex H from graph g.
     1. For each parent p of H and each child c of H, update directed edges p -> c 
@@ -635,19 +599,26 @@ def hide_node(g, H):
     3. Clean up all references to H.
     """
     gg = deepcopy(g)
+    # ensure any existing bidirected lag-sets become a list of PathTree
+    for u in list(gg):
+        for v in list(gg[u]):   
+            for et in (1, 2):
+                if et in gg[u][v] and isinstance(gg[u][v][et], set):
+                    gg[u][v][et] = to_path_forest(gg[u][v][et])
     if H not in g:
         raise KeyError(f"Node {H} not found in graph.")
 
     # Children of H: dictionary {child: delay from H->child}
     ch = children(g, H)
     # Parents of H: dictionary {parent: delay from p->H}
-    pa = parents(g, H)
-
-    # Self-loop at H:
-    if H in g[H]:
-        sl = g[H][H][1]
+    pa_orig = parents(g, H)
+    if zero_incoming:
+        # keep every parent, but give it zero delay
+        pa = { p: {0} for p in pa_orig }
     else:
-        sl = set()
+        pa = pa_orig
+    # Self-loop at H:
+    sl = g[H][H][1] if H in g[H] else set()
 
     # Remove H from gg first.
     remove_node(gg, H)

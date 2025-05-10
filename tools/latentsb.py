@@ -83,7 +83,6 @@ def bpts(graph, bclique, max_new_loops=2, maxloop=10):
     Returns a dict mapping (u,v) → refined PathTree.
     """
     solver = pywrapcp.Solver("batch_pts")
-    solver.set_time_limit(30_000)
     V1, V2 = bclique
     edge_lag_dict: dict[tuple,str] = {}
     for u in V1:

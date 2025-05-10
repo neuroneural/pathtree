@@ -92,8 +92,6 @@ def refine_edge(pt: PathTree, Eij: set[int]) -> PathTree:
 
     return pt
 
-
-
 def refine_by_bcliques(graph, bcliques):
     # for each clique, refine all its edges in place
     for bc in bcliques:
@@ -106,78 +104,77 @@ def refine_by_bcliques(graph, bcliques):
             graph[v][w][1] = refine_edge(pt, lagset)
     return graph
 
-def backward_inference(graph, observed_nodes):
-    """
-    Sequentially remove every node not in observed_nodes,
-    hiding it via hide_node(), then recompressing all edges
-    back to lag‐sets via forest_to_set().
-    """
-    from latents import hide_node
-    G = deepcopy(graph)
-    latents = [n for n in G if n not in observed_nodes]
-
-    for H in latents:
-        # 1) hide H, updating G in place
-        G = hide_node(G, H)
-
-        # 2) for every remaining edge u->v, recompress its forest
-        for u in list(G):
-            for v in list(G[u]):
-                # assume after hide_node, G[u][v] holds a PathTree or list thereof
-                forest = G[u][v].get(1) or G[u][v].get(2)
-                # turn it back into a simple set of ints
-                new_lags = forest_to_set(forest)
-                # overwrite with the correct edge‐type key (1 or 2)
-                edge_type = 1 if 1 in G[u][v] else 2
-                G[u][v] = { edge_type: new_lags }
-
-    return G
 def extract_bidirected(G):
     next_latent = max(G) + 1
+    seen = set()
     for u in list(G):
         for v, edges in list(G[u].items()):
-            if 2 in edges:
+            if 2 in edges and (u, v) not in seen:
+                seen.add((u,v)); seen.add((v,u))
                 for lag in edges[2]:
-                    H = next_latent
-                    next_latent += 1
-                    # introduce A→H and H→B
+                    H = next_latent; next_latent += 1
                     G.setdefault(u, {})[H] = {1: {lag}}
                     G.setdefault(H, {})[v] = {1: {lag}}
-                # remove the original A↔B
+                # remove both sides of the bi-directed link
                 del G[u][v][2]
-                if not G[u][v]:
-                    del G[u][v]
+                if not G[u][v]: del G[u][v]
+                if 2 in G.get(v, {}).get(u, {}):
+                    del G[v][u][2]
+                    if not G[v][u]: del G[v][u]
     return G
-def full_backward_inference(raw_graph, observed_nodes):
-    """
-    Repeatedly hide all latents until the compressed lags stop changing.
-    Handles any bidirected edges up-front, then delegates to backward_inference.
-    """
 
-    # 1) Wrap every lag-set into a PathTree forest
+def backward_inference(graph, observed_nodes, original_nodes):
+    from latents import hide_node
+
+    G = deepcopy(graph)
+    # split latents so injected come first
+    all_latents      = [n for n in G if n not in observed_nodes]
+    injected_latents = [n for n in all_latents if n not in original_nodes]
+    original_latents = [n for n in all_latents if n in     original_nodes]
+
+    for H in injected_latents + original_latents:
+        # injected ⇒ zero_incoming=True, original ⇒ zero_incoming=False
+        zero_in = (H not in original_nodes)
+        G = hide_node(G, H, zero_incoming=zero_in)
+
+        # now recompress every edge exactly as before
+        for u in list(G):
+            for v in list(G[u]):
+                forest   = G[u][v].get(1) or G[u][v].get(2)
+                new_lags = forest_to_set(forest)
+                et       = 1 if 1 in G[u][v] else 2
+                G[u][v]  = {et: new_lags}
+
+    return G
+
+def full_backward_inference(raw_graph, observed_nodes):
+
+    # remember which nodes are “real”
+    original = set(raw_graph.keys())
+
+    # peel off all bidirected edges
     G = deepcopy(raw_graph)
     G = extract_bidirected(G)
+
+    # wrap each remaining lag‐set into a PathTree forest
     for u in list(G):
         for v in list(G[u]):
-            et = next(iter(G[u][v]))           # 1 or 2
+            et     = next(iter(G[u][v]))
             lagset = G[u][v][et]
-            if not isinstance(lagset, list):
-                forest = to_path_forest(lagset)
-            else:
-                forest = lagset
+            forest = lagset if isinstance(lagset, list) else to_path_forest(lagset)
             G[u][v] = {et: forest}
 
-    # 2) Peel off all bidirected (etype=2) edges exactly once
-    
-
-    # 3) Iteratively hide latents (etype=1) until nothing changes
-    prev = None
-    curr = G
+    # iteratively hide latents *with* knowledge of originals
+    prev, curr = None, G
     while curr != prev:
         prev = deepcopy(curr)
-        curr = backward_inference(curr, observed_nodes)
+        curr = backward_inference(curr, observed_nodes, original)
 
+    # make sure observed nodes still appear
+    for o in observed_nodes:
+        curr.setdefault(o, {})
     return curr
+
 
 def find_bcliques(graph):
     """

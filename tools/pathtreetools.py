@@ -2,14 +2,13 @@ import sys
 
 sys.path.append('./tools/')
 from copy import deepcopy
-from pathtree import PathTree, osumset_full, InfiniteExpression
+from pathtree import PathTree
 from ortools.constraint_solver import pywrapcp
 from matplotlib.cbook import flatten
 from functools import wraps
 import numpy as np
 from sortedcontainers import SortedDict
-from sympy import S, sympify, Add
-from itertools import combinations
+from sympy import S, sympify
 
 def to_path_forest(x):
     """
@@ -133,32 +132,45 @@ def backward_inference(graph, observed_nodes):
                 G[u][v] = { edge_type: new_lags }
 
     return G
-
+def extract_bidirected(G):
+    next_latent = max(G) + 1
+    for u in list(G):
+        for v, edges in list(G[u].items()):
+            if 2 in edges:
+                for lag in edges[2]:
+                    H = next_latent
+                    next_latent += 1
+                    # introduce A→H and H→B
+                    G.setdefault(u, {})[H] = {1: {lag}}
+                    G.setdefault(H, {})[v] = {1: {lag}}
+                # remove the original A↔B
+                del G[u][v][2]
+                if not G[u][v]:
+                    del G[u][v]
+    return G
 def full_backward_inference(raw_graph, observed_nodes):
     """
     Repeatedly hide all latents until the compressed lags stop changing.
-    
-    :param raw_graph: dict of {u: {v: {etype: forest_or_set}}}
-    :param observed_nodes: iterable of node IDs to keep observed
-    :returns: same-format graph where everything else has been marginalized out
+    Handles any bidirected edges up-front, then delegates to backward_inference.
     """
 
-    # 1) Make sure every edge is wrapped into a PathTree forest
-    G: dict = deepcopy(raw_graph)
+    # 1) Wrap every lag-set into a PathTree forest
+    G = deepcopy(raw_graph)
+    G = extract_bidirected(G)
     for u in list(G):
         for v in list(G[u]):
-            # pick whichever etype (1 or 2) you have
-            etypes = list(G[u][v].keys())
-            et = etypes[0]
+            et = next(iter(G[u][v]))           # 1 or 2
             lagset = G[u][v][et]
-            # wrap into a singleton forest if not already
             if not isinstance(lagset, list):
                 forest = to_path_forest(lagset)
             else:
                 forest = lagset
             G[u][v] = {et: forest}
 
-    # 2) Iteratively remove latents until stable
+    # 2) Peel off all bidirected (etype=2) edges exactly once
+    
+
+    # 3) Iteratively hide latents (etype=1) until nothing changes
     prev = None
     curr = G
     while curr != prev:

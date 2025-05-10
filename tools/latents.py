@@ -8,7 +8,6 @@ import numpy as np
 from random import shuffle
 
 from copy import deepcopy
-from latentsb import bpts
 from pathtree import PathTree, osumset_full
 from pathtreetools import find_maximal_bcliques, full_backward_inference, to_path_forest, forest_to_set
 

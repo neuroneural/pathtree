@@ -148,33 +148,39 @@ def backward_inference(graph, observed_nodes, original_nodes):
     return G
 
 def full_backward_inference(raw_graph, observed_nodes):
-
-    # remember which nodes are “real”
+    # 1) record which nodes are “real”
     original = set(raw_graph.keys())
 
-    # peel off all bidirected edges
+    # 2) peel off bidirected edges
     G = deepcopy(raw_graph)
     G = extract_bidirected(G)
 
-    # wrap each remaining lag‐set into a PathTree forest
+    # 3) wrap whatever remains into PathTree forests (or keep existing ones)
     for u in list(G):
         for v in list(G[u]):
-            et     = next(iter(G[u][v]))
-            lagset = G[u][v][et]
-            forest = lagset if isinstance(lagset, list) else to_path_forest(lagset)
+            et      = next(iter(G[u][v]))
+            dat     = G[u][v][et]
+            if isinstance(dat, PathTree):
+                forest = [dat]
+            elif isinstance(dat, list):
+                forest = dat
+            else:
+                forest = to_path_forest(dat)
             G[u][v] = {et: forest}
 
-    # iteratively hide latents *with* knowledge of originals
-    prev, curr = None, G
-    while curr != prev:
-        prev = deepcopy(curr)
-        curr = backward_inference(curr, observed_nodes, original)
+    # 4) **one** backward pass is enough to remove *all* latents
+    G = backward_inference(G, observed_nodes, original)
 
-    # make sure observed nodes still appear
+    # 5) make sure observed nodes still appear
     for o in observed_nodes:
-        curr.setdefault(o, {})
-    return curr
-
+        G.setdefault(o, {})
+    for u in list(G):
+        for v in list(G[u]):
+            forest = G[u][v].get(1) or G[u][v].get(2)
+            if not isinstance(forest, list):
+                forest = [forest]
+            G[u][v] = {1: forest_to_set(forest)}
+    return G
 
 def find_bcliques(graph):
     """
@@ -787,25 +793,11 @@ def seq2pt(seq, verbose=False, cutoff=100):
 def update_edge_lags(graph, bclique, new_pt):
     V1, V2 = bclique
 
-    # Obtain the overall delay expression as a sympy expression.
-    expr = sympify(new_pt.get_overall_delay_expr())
-    # Extract the constant part from the expression.
-    const_part = expr.as_coeff_Add()[0]
-    # Compute the remainder (the cycle contribution) as the difference.
-    remainder = expr - const_part
+    # 5) overwrite each edge in the B-clique to use this tree
+    for u in V1:
+        for v in V2:
+            graph[u][v][1] = new_pt
 
-    # Create a new PathTree for the edge with root preset equal to the constant part.
-    pt_edge = PathTree(preset=const_part)
-    # If there is a nonzero remainder, represent it as a child.
-    if remainder != S.Zero:
-        # For simplicity, assume the remainder is of the form coefficient*symbol.
-        coeff, term = remainder.as_coeff_Mul()
-        pt_child = PathTree(preset=coeff)
-        pt_edge.add_child(pt_child)
-
-    for v1 in V1:
-        for v2 in V2:
-            graph[v1][v2][1] = pt_edge
     return graph
 
 def growtree(pt, element, ref_elements, verbose=False, maxloop=100, cutoff=100):
@@ -903,9 +895,9 @@ def apply_minimal_refinement(graph, bcliques):
     for bclique in bcliques:
         edge_lags = compute_edge_lags(graph, bclique)
         for (v1, v2), lag_set in edge_lags.items():
-            pt = PathTree(lag_set)
-            refined_pts = [growtree(pt, lag, list(lag_set)) for lag in lag_set]
-            minimal_pt = smallest_pt(refined_pts)
+            base = min(lag_set)
+            pt0  = PathTree(preset={base})
+            minimal_pt = refine_edge(pt0, lag_set)
             update_edge_lags(graph, bclique, minimal_pt)
     return graph
 

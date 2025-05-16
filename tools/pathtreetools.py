@@ -1,14 +1,15 @@
 import sys
-
+import heapq
 sys.path.append('./tools/')
 from copy import deepcopy
-from pathtree import PathTree
-from ortools.constraint_solver import pywrapcp
+from itertools import combinations
+from math import gcd
 from matplotlib.cbook import flatten
-from functools import wraps
+
+from ortools.constraint_solver import pywrapcp
+from pathtree import PathTree
 import numpy as np
 from sortedcontainers import SortedDict
-from sympy import S, sympify
 
 def to_path_forest(x):
     """
@@ -31,43 +32,65 @@ def to_path_forest(x):
         return []
     else:
         raise TypeError(f"Cannot convert {x} into a path-forest")
-    
-def forest_to_set(forest, cap=None, max_repeats=1):
+
+def forest_to_set(forest, cap=5):
+    """
+    Collapse a PathForest into the first `cap` integer lengths,
+    allowing loops to repeat indefinitely but stopping once cap are found.
+    """
+    # 1) Normalize into PathTree roots
+    roots = to_path_forest(forest)
+    # split any multi-base root into one root per base
+    expanded = []
+    for r in roots:
+        if isinstance(r.preset, set) and len(r.preset) > 1:
+            for b in r.preset:
+                # shallow-copy the loopset so every clone shares it
+                expanded.append(PathTree(preset={b}, loopset=r.loopset.copy()))
+        else:
+            expanded.append(r)
+    roots = expanded
+    # 2) Min-heap of (total_length, node)
+    heap = []
+    for r in roots:
+        base = next(iter(r.preset)) if isinstance(r.preset, set) else r.preset
+        heapq.heappush(heap, (base, r))
+
     result = set()
-    def dfs(node, acc):
-        # add the “just arrived here” total
-        base = (next(iter(node.preset))
-                if isinstance(node.preset, set)
-                else node.preset)
-        total = acc + base
-        if cap is None or total <= cap:
-            result.add(total)
 
-        # now for each loop, try up to max_repeats passes *before* recursing
-        for child in node.loopset:
-            L = (next(iter(child.preset))
-                 if isinstance(child, PathTree)
-                 else child)
-            for k in range(1, max_repeats+1):
-                loop_total = total + k*L
-                if cap is None or loop_total <= cap:
-                    result.add(loop_total)
-                    # only now descend into child’s subtree _without_ adding L again
-                    if isinstance(child, PathTree):
-                        # temporarily treat child as “flat” so dfs doesn’t re‐add its preset
-                        original_preset = child.preset
-                        child.preset = {0}
-                        dfs(child, loop_total)
-                        child.preset = original_preset
+    # 3) Pop smallest total, record it, then re-enqueue loops on THAT node
+    while heap and (cap is None or len(result) < cap):
+        total, node = heapq.heappop(heap)
+        if total in result:
+            continue
+        result.add(total)
 
-    for root in to_path_forest(forest):
-        dfs(root, 0)
+        # re-enqueue loops on the same node
+        for loop in node.loopset:
+            if isinstance(loop, PathTree):
+                # a nested loop‐tree
+                L = next(iter(loop.preset)) if isinstance(loop.preset, set) else loop.preset
+                heapq.heappush(heap, (total + L, node))
+            elif isinstance(loop, int):
+                # a flat self‐loop of length `loop`
+                heapq.heappush(heap, (total + loop, node))
+            else:
+                # just in case someone stuffed something else in there
+                try:
+                    # if it's a singleton set, etc.
+                    L = int(loop)
+                    heapq.heappush(heap, (total + L, node))
+                except:
+                    raise TypeError(f"Unsupported loop item {loop!r}")
+
     return result
 
 def extends(pt, lag: int, Eij: set[int]) -> bool:
     new_pt = deepcopy(pt)
     new_pt.add_loop(lag)
-    all_lags = forest_to_set(new_pt, cap=1)
+    # collect the first few delays (default cap=5 is enough to see any extras)
+    all_lags = forest_to_set(new_pt)  
+    # we only allow this loop if it doesn't introduce _any_ new delays
     return all_lags.issubset(Eij)
 
 def refine_edge(pt: PathTree, Eij: set[int]) -> PathTree:
@@ -89,20 +112,12 @@ def refine_edge(pt: PathTree, Eij: set[int]) -> PathTree:
         delta = e - base
         if extends(pt, delta, Eij):
             pt.add_loop(delta)
+    generated = forest_to_set(pt)
+    if generated != Eij:
+        # fallback: a “flat” forest that exactly matches Eij, no loops
+        return PathTree(preset=Eij, loopset=set())
 
     return pt
-
-def refine_by_bcliques(graph, bcliques):
-    # for each clique, refine all its edges in place
-    for bc in bcliques:
-        E = compute_edge_lags(graph, bc)
-        for (v,w), lagset in E.items():
-            pt = graph[v][w][1]         # your current PathTree or raw set
-            # if it isn’t a PathTree yet, wrap it:
-            if not isinstance(pt, PathTree):
-                pt = PathTree(preset=lagset)
-            graph[v][w][1] = refine_edge(pt, lagset)
-    return graph
 
 def extract_bidirected(G):
     next_latent = max(G) + 1
@@ -123,7 +138,7 @@ def extract_bidirected(G):
                     if not G[v][u]: del G[v][u]
     return G
 
-def backward_inference(graph, observed_nodes, original_nodes):
+def forward(graph, observed_nodes, original_nodes):
     from latents import hide_node
 
     G = deepcopy(graph)
@@ -147,7 +162,7 @@ def backward_inference(graph, observed_nodes, original_nodes):
 
     return G
 
-def full_backward_inference(raw_graph, observed_nodes):
+def full_forward(raw_graph, observed_nodes):
     # 1) record which nodes are “real”
     original = set(raw_graph.keys())
 
@@ -169,18 +184,181 @@ def full_backward_inference(raw_graph, observed_nodes):
             G[u][v] = {et: forest}
 
     # 4) **one** backward pass is enough to remove *all* latents
-    G = backward_inference(G, observed_nodes, original)
+    G = forward(G, observed_nodes, original)
 
     # 5) make sure observed nodes still appear
     for o in observed_nodes:
         G.setdefault(o, {})
+
     for u in list(G):
         for v in list(G[u]):
-            forest = G[u][v].get(1) or G[u][v].get(2)
-            if not isinstance(forest, list):
-                forest = [forest]
-            G[u][v] = {1: forest_to_set(forest)}
+            val = G[u][v].get(1) or G[u][v].get(2)
+            if isinstance(val, set):
+                lags = val
+            else:
+                forest = val if isinstance(val, list) else [val]
+                lags = forest_to_set(forest)
+            G[u][v] = {1: lags}
     return G
+
+from math import gcd
+from copy import deepcopy
+from pathtreetools import forest_to_set
+from pathtree import PathTree          # only needed for type check
+
+def decompress_to_unit_graph(obs_graph):
+    """
+    1) Collapse any PathTree to an integer lag-set.
+    2) Pull each bidirected edge u<->v into a latent H.
+    3) Detect arithmetic-progression directed edges and encode them
+       with a single latent + self-loop (kept unexpanded).
+    4) Expand every remaining integer-lag edge to unit-lag chains.
+    5) Ensure all observed nodes still appear.
+    """
+
+    # ── Step 0: normalise every edge to {etype: set(int)} ──────────────
+    G0 = {}
+    for u, nbrs in obs_graph.items():
+        G0[u] = {}
+        for v, ed in nbrs.items():
+            collapsed = {}
+            for etype, raw in ed.items():
+                if isinstance(raw, set):
+                    lags = raw
+                else:                           # list[PathTree] | PathTree
+                    forest = raw if isinstance(raw, list) else [raw]
+                    lags   = forest_to_set(forest)
+                collapsed[etype] = set(lags)
+            G0[u][v] = collapsed
+
+    # ── Step 1: move bidirected edges → new latents ───────────────────
+    G1 = {}
+    next_latent   = max(G0) + 1
+    bidir_latents = set()
+
+    seen_bidir = set()          # NEW  unordered pairs already handled
+
+    for u, nbrs in G0.items():
+        for v, ed in nbrs.items():
+
+            # (A) keep directed edge
+            if 1 in ed:
+                G1.setdefault(u, {})[v] = {1: set(ed[1])}
+
+            # (B) explode each bidirected lag
+            if 2 in ed:
+                pair = tuple(sorted((u, v)))   # {u,v} as an unordered key
+                if pair in seen_bidir:
+                    continue                   # already processed this pair
+                seen_bidir.add(pair)
+
+                for L in sorted(ed[2]):        # keep *all* bidirected lags
+                    H = next_latent; next_latent += 1
+                    bidir_latents.add(H)
+
+                    # H → u   (lag 1)
+                    G1.setdefault(H, {})[u] = {1: {1}}
+                    # H → v   (lag L+1)   (integer lag, no chain yet)
+                    G1[H][v] = {1: {L + 1}}
+
+    # ── Step 1½: compress A-P lag-sets into single latent + self-loop ──
+    G2 = deepcopy(G1)        # we’ll delete / add edges inside the loop
+    for u, nbrs in list(G1.items()):
+        for v, ed in list(nbrs.items()):
+            if u == v or 1 not in ed:
+                continue
+            L = ed[1]
+            if len(L) < 2:
+                continue
+            a = min(L)
+            d = gcd(*[x - a for x in L])
+            if d == 0 or L != {a + k*d for k in range(len(L))}:
+                continue        # not an exact A-P → leave unchanged
+            if a == 1:
+                continue
+            # ----- rewrite this edge -----------------------------------
+            del G2[u][v]
+            if not G2[u]:            # clean empties
+                del G2[u]
+            # (1) u  ->  H   at lag 1
+            H = next_latent; next_latent += 1
+            # H -> u   (lag 1)
+            G2.setdefault(u, {})[H] = {1: {1}}
+            # (2) self-loop on H  (lag = d)
+            G2.setdefault(H, {})[H] = {1: {d}}
+            # H -> v   (lag a)  (expand to chain of (a-1) unit lags)
+            prev = H
+            if a == 1:
+                # special case: min lag was 1 (shouldn’t actually happen here)
+                G2.setdefault(prev, {})[v] = {1: {1}}
+            else:
+                # need (a-1) unit edges *including* the final one to v
+                for _ in range(a - 2):          # <-- a-2 intermediates
+                    K = next_latent; next_latent += 1
+                    G2.setdefault(prev, {})[K] = {1: {1}}
+                    prev = K
+                G2.setdefault(prev, {})[v] = {1: {1}}   # final edge
+
+    # directed-only graph to expand
+    Gdir = G2
+
+    # ── Step 2: expand *non-self* integer lags to unit chains ──────────
+    G_unit = {}
+    for u, nbrs in Gdir.items():
+        G_unit.setdefault(u, {})
+                # ▸ 1.  Skip the special latents that came from bidirected edges
+        if u in bidir_latents:
+            # just copy their integer-lag edges verbatim
+            for v, ed in nbrs.items():
+                G_unit[u][v] = {1: set(ed[1])}
+            continue          # go straight to the next u
+        # NEW: remember the helper nodes we may create for each lag length
+        # **only for this parent u**
+        chain_cache = {}          #  key = L   value = list of helper nodes
+
+        for v, ed in nbrs.items():
+            lags = ed[1]
+
+            for L in sorted(lags):
+
+                # (a) keep self-loops as they are
+                if u == v:
+                    G_unit[u]\
+                        .setdefault(u, {})\
+                        .setdefault(1, set())\
+                        .add(L)
+                    continue
+
+                # (b) unit lag – nothing to expand
+                if L == 1:
+                    G_unit[u].setdefault(v, {})[1] = {1}
+                    continue
+
+                # (c) L > 1  →  reuse or build a chain of length (L-1)
+                if L in chain_cache:
+                    # we have already built this chain once, just re-use its tail
+                    tail = chain_cache[L][-1] if chain_cache[L] else u
+                    G_unit.setdefault(tail, {})[v] = {1: {1}}
+                    continue
+
+                # otherwise build it now and store in cache
+                prev = u
+                helpers = []
+                for _ in range(L - 1):
+                    H = next_latent; next_latent += 1
+                    G_unit.setdefault(prev, {})[H] = {1: {1}}
+                    helpers.append(H)
+                    prev = H
+                # helpers[-1] is the tail of the chain
+                chain_cache[L] = helpers
+                G_unit.setdefault(prev, {})[v] = {1: {1}}
+
+    # ── Step 3: ensure every observed node still appears ───────────────
+    for u in obs_graph:
+        G_unit.setdefault(u, {})
+
+    return G_unit
+
 
 def find_bcliques(graph):
     """
@@ -189,9 +367,10 @@ def find_bcliques(graph):
     every v1 in V1 has at least one non-empty edge (directed or bidirected)
     to every v2 in V2.
     """
-    from itertools import combinations
-
-    nodes = list(graph.keys())
+    nodes = sorted(
+        set(graph.keys()) |
+        {nbr for nbrs in graph.values() for nbr in nbrs.keys()}
+    )
     bcliques = []
     # iterate over all non-empty subsets for parents (V1)
     for r in range(1, len(nodes) + 1):
@@ -244,13 +423,16 @@ def compute_edge_lags(graph, bclique):
     edge_lags = {}
     for v1 in V1:
         for v2 in V2:
-            # Use type 1 if available, else type 2.
-            if 1 in graph[v1][v2]:
-                edge_lags[(v1, v2)] = graph[v1][v2][1]
-            elif 2 in graph[v1][v2]:
-                edge_lags[(v1, v2)] = graph[v1][v2][2]
-            else:
-                raise KeyError(f"No directed or bidirected edge found for ({v1}, {v2}).")
+            ed = graph[v1][v2]
+            # collect all lags under every etype present
+            lags = set()
+            for etype, raw in ed.items():
+                if isinstance(raw, set):
+                    lags |= raw
+                else:
+                    forest = raw if isinstance(raw, list) else [raw]
+                    lags |= forest_to_set(forest)
+            edge_lags[(v1, v2)] = lags
     return edge_lags
 
 def compute_directed_lags(g, v, w, unobserved):
@@ -884,30 +1066,60 @@ def growtree(pt, element, ref_elements, verbose=False, maxloop=100, cutoff=100):
 
     return smallest_pt(pts)
 
+def apply_minimal_refinement(graph, bcliques, cap=5):
+    for V1, V2 in bcliques:
+        for v1 in V1:
+            for v2 in V2:
+                if v2 not in graph[v1]:
+                    continue
+                for etype, raw in list(graph[v1][v2].items()):
 
-def apply_minimal_refinement(graph, bcliques):
-    """
-    Apply minimal PathTree refinements across the graph.
-    :param graph: Input graph.
-    :param bcliques: List of B-cliques.
-    :return: Refined graph.
-    """
-    for bclique in bcliques:
-        edge_lags = compute_edge_lags(graph, bclique)
-        for (v1, v2), lag_set in edge_lags.items():
-            base = min(lag_set)
-            pt0  = PathTree(preset={base})
-            minimal_pt = refine_edge(pt0, lag_set)
-            update_edge_lags(graph, bclique, minimal_pt)
-    return graph
+                    # ── NEW: unwrap the common ‘flat preset = {…}’ pattern ──
+                    if (isinstance(raw, PathTree) and not raw.loopset
+                        and isinstance(raw.preset, set) and len(raw.preset) > 1):
+                        lag_set = raw.preset
+                    else:
+                        if isinstance(raw, set):
+                            lag_set = raw
+                        else:                      # PathTree or list thereof
+                            forest = raw if isinstance(raw, list) else [raw]
+                            lag_set = forest_to_set(forest, cap=cap)
+                    # ----------------------------------------------------------------
 
-def refine_edges(graph, bcliques, unobserved):
-    for bclique in bcliques:
-        for v in bclique[0]:  # V1
-            for w in bclique[1]:  # V2
-                if v != w:
-                    graph[v][w][1] = compute_directed_lags(graph, v, w, unobserved)
-                    graph[w][v][1] = compute_bi_directed_lags(graph, v, w, unobserved)
+                    if not lag_set:
+                        continue
+
+                    a = min(lag_set)
+                    diffs = [x - a for x in lag_set]
+                    step  = gcd(*diffs) if len(diffs) > 1 else 0
+
+                    # arithmetic progression → single-loop *only* if it stays inside lag_set
+                    if step and lag_set == {a + k*step for k in range(len(lag_set))}:
+                        cand = PathTree(preset={a}); cand.add_loop(step)
+                        gen  = forest_to_set(cand, cap=cap)
+                        if gen.issubset(lag_set):          # ✓ safe -- keep it
+                            graph[v1][v2][etype] = cand
+                            continue                       # done
+                    # else fall through to “explicit” representation
+
+                    # original heuristics
+                    if len(lag_set) == 2:
+                        b = max(lag_set)
+                        # candidate PathTree  (a,<b-a>)
+                        pt = PathTree(preset={a}); pt.add_loop(b - a)
+
+                        # keep it *only* if it generates no new lags
+                        gen = forest_to_set(pt, cap=cap)      # e.g. {a, a+d, a+2d, …}
+                        if gen.issubset(lag_set):
+                            graph[v1][v2][etype] = pt
+                        else:          # otherwise fall back to “one tree per lag”
+                            graph[v1][v2][etype] = [
+                                PathTree(preset={e}) for e in sorted(lag_set)
+                            ]
+                    else:
+                        graph[v1][v2][etype] = [
+                            PathTree(preset={e}) for e in sorted(lag_set)
+                        ]
     return graph
 
 def pt2seq(pt, num):

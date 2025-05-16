@@ -9,7 +9,7 @@ from random import shuffle
 
 from copy import deepcopy
 from pathtree import PathTree, osumset_full
-from pathtreetools import find_maximal_bcliques, full_backward_inference, to_path_forest, forest_to_set
+from pathtreetools import find_maximal_bcliques, full_forward, to_path_forest, forest_to_set
 
 g_var_counter = 0
 
@@ -450,7 +450,7 @@ def merge_weightsets(ab, ah, hb, hh, induced_bidirected=False):
                            for pt2 in hb_forest for y in get_base_as_set(pt2.preset)}
         pt = PathTree(preset=new_base, loopset=set())
         forest = [pt]
-        print("Final merged PathForest:", forest)
+        #print("Final merged PathForest:", forest)
         return forest
     else:
         # Instead of summing just the presets, use sum_forests so that the loopset info is preserved.
@@ -488,7 +488,7 @@ def merge_weightsets(ab, ah, hb, hh, induced_bidirected=False):
         
         pt_final = PathTree(preset=new_preset, loopset=final_loopset)
         forest = [pt_final]
-        print("Final merged PathForest:", forest)
+        #print("Final merged PathForest:", forest)
         return forest
 def add_self_loops(forest, hh):
     """
@@ -556,35 +556,48 @@ def flatten_to_ints(obj):
             results |= flatten_to_ints(item)
 
         # else skip or raise TypeError
-
     return results
 
+def _condense_flat_roots(forest):
+    """
+    Merge every *flat* root (loopset == ∅) into ONE PathTree whose preset
+    is the union of all their presets.  Any non-flat roots are kept unchanged.
+    """
+    flat_bases = set()
+    non_flat   = []
+    for pt in forest:
+        if pt.loopset:                       # has loops → keep as-is
+            non_flat.append(pt)
+        else:                                # completely flat
+            flat_bases |= get_base_as_set(pt.preset)
+
+    if flat_bases:
+        non_flat.insert(0, PathTree(preset=flat_bases, loopset=set()))
+    return non_flat
 
 def merge_forest_by_base(forest):
     """
-    Given a list of PathTree objects (forest), merge contributions that have the same
-    (flattened) preset (assumed to be a singleton) by taking the union of their loopsets.
-    
-    For example, if forest contains two PathTrees both with preset {10} (and maybe differing
-    loopsets), the result will be one PathTree with preset {10} and loopset equal to the union
-    of the two loopsets.
+    Merge PathTrees that share the same *base* delay by taking the union of
+    their loop-sets, then condense any remaining flat roots so that
+    [{0},{1}] becomes [{0,1}].
     """
-    merged = {}  # key: base (int), value: union of loopset contributions (a set)
-    for pt in forest:
-        bases = get_base_as_set(pt.preset)  # flattened preset as a plain set of ints
-        loops = flatten_to_ints(pt.loopset)
+    merged: dict[int, set[int]] = {}             # base → union(loopset)
 
-        # We assume each contribution is for a single base.
-        for b in bases:
-            loops = flatten_to_ints(pt.loopset)
-            if b in merged:
-                merged[b].update(loops)
-            else:
-                merged[b] = set(loops)
-    result = [] 
-    for b, ls in merged.items():
-        result.append(PathTree(preset={b}, loopset=loops))
-    return result
+    for pt in forest:
+        bases = get_base_as_set(pt.preset)       # {int,…}
+        loops = flatten_to_ints(pt.loopset)      # {int,…}
+
+        for b in bases:                          # (we assume singleton bases)
+            merged.setdefault(b, set()).update(loops)
+
+    # rebuild as PathTree objects
+    flat_forest = [
+        PathTree(preset={b}, loopset=ls) for b, ls in merged.items()
+    ]
+
+    # 🔸 final visual condensation
+    return _condense_flat_roots(flat_forest)
+
 def hide_node(g, H, zero_incoming=False):
     """
     Remove vertex H from graph g.
@@ -609,8 +622,18 @@ def hide_node(g, H, zero_incoming=False):
 
     # Children of H: dictionary {child: delay from H->child}
     ch = children(g, H)
-    # Parents of H: dictionary {parent: delay from p->H}
-    pa_orig = parents(g, H)
+    # Parents of H: include both directed (etype=1) and bidirected (etype=2) into H
+    pa_orig = {}
+    for p, nbrs in g.items():
+        if H in nbrs:
+            for et, raw in nbrs[H].items():
+                # collapse raw (set or PathTree/list) into a pure int‐set
+                if isinstance(raw, set):
+                    lags = raw
+                else:
+                    forest = raw if isinstance(raw, list) else [raw]
+                    lags = forest_to_set(forest)
+                pa_orig.setdefault(p, set()).update(lags)
     if zero_incoming:
         # keep every parent, but give it zero delay
         pa = { p: {0} for p in pa_orig }
@@ -625,6 +648,8 @@ def hide_node(g, H, zero_incoming=False):
     # --- Branch 1: Update directed edges from observed parents of H to each child c ---
     if pa:
         for p in pa:
+            if p not in gg:               # ← guard against missing parent
+                continue
             for c in ch:
                 if c in gg[p]:
                     existing = gg[p][c].get(1, None)
@@ -635,22 +660,37 @@ def hide_node(g, H, zero_incoming=False):
                 ch_weights = ch[c] if c in ch else set()
                 sl_weights = sl if sl else set()
 
-                print(f"For parent={p}, child={c}: existing={bool(existing)}, ah={pa_weights}, hb={ch_weights}, sl={sl_weights}")
+                #print(f"For parent={p}, child={c}: existing={bool(existing)}, ah={pa_weights}, hb={ch_weights}, sl={sl_weights}")
 
                 if c == H or p == H:
                     continue
 
-                new_branch = merge_weightsets(set(), pa_weights, ch_weights, sl_weights, induced_bidirected=False)
+                # new_branch = merge_weightsets(set(), pa_weights, ch_weights, sl_weights, induced_bidirected=False)
 
-                if existing is None:
-                    gg[p][c] = {1: new_branch}
+                # if existing is None:
+                #     gg[p][c] = {1: new_branch}
+                # else:
+                #     if not isinstance(existing, list):
+                #         existing = [existing]
+                #     combined = existing + new_branch
+                #     combined = merge_forest_by_base(combined)
+                #     gg[p][c][1] = combined
+                was_bidir = (
+                    2 in g.get(p, {}).get(H, {}) or 
+                    2 in g.get(H, {}).get(c, {})
+                )
+                new_branch = merge_weightsets(
+                    set(), pa_weights, ch_weights, sl_weights,
+                    induced_bidirected=was_bidir
+                )
+                key = 2 if was_bidir else 1
+
+                old = gg.setdefault(p, {}).setdefault(c, {}).get(key)
+                if old is None:
+                    gg[p][c][key] = new_branch
                 else:
-                    if not isinstance(existing, list):
-                        existing = [existing]
-                    combined = existing + new_branch
-                    combined = merge_forest_by_base(combined)
-                    gg[p][c][1] = combined
-
+                    old_list = old if isinstance(old, list) else [old]
+                    gg[p][c][key] = merge_forest_by_base(old_list + new_branch)
     # --- Branch 2: Always induce bidirected edges among all pairs of children of H ---
     if ch and (len(ch) > 1):
         children_list = list(ch.keys())
@@ -699,17 +739,42 @@ def hide_node(g, H, zero_incoming=False):
             del gg[node][H]
     if H in gg:
         del gg[H]
+    for u in list(gg):
+        for v in list(gg[u]):
+            for et in tuple(gg[u][v].keys()):
+                raw = gg[u][v][et]
+                # convert ANY raw value (set, int, tuple, PathTree, list) into List[PathTree]
+                forest_list = to_path_forest(raw)
+                gg[u][v][et] = forest_list
+    # ─── 2) Loop‐child normalization: ensure every loop is a PathTree ─────
+    def normalize_loops(pt: PathTree):
+        new_loops = set()
+        for child in pt.loopset:
+            if isinstance(child, PathTree):
+                normalize_loops(child)
+                new_loops.add(child)
+            else:
+                wrapped = to_path_forest(child)[0]
+                normalize_loops(wrapped)
+                new_loops.add(wrapped)
+        pt.loopset = new_loops
+
+    for u in gg:
+        for v in gg[u]:
+            for et in list(gg[u][v].keys()):        # ← use .keys(), not .values()
+                forest_list = gg[u][v][et]
+                # make sure we have a list of PathTrees
+                if not isinstance(forest_list, list):
+                    forest_list = [forest_list]
+
+                # (a) normalise child loops
+                for pt in forest_list:
+                    normalize_loops(pt)
+
+                # (b) collapse flat roots that share the same base
+                gg[u][v][et] = merge_forest_by_base(forest_list)
 
     return gg
-
-def degrees(nodes, g):
-    return [len(parents(g, v)) + len(children(g, v)) for v in nodes]
-
-
-def sortbydegree(nodes, g):
-    idx = np.argsort(degrees(nodes, g))
-    return list(np.asarray(nodes)[idx])
-
 
 def hide_nodes(g, nodelist, dosort=True):
     nodeset = set()  # make sure not to delete a node twice
@@ -720,6 +785,14 @@ def hide_nodes(g, nodelist, dosort=True):
         gg = hide_node(gg, n)
         nodeset.add(n)
     return gg
+
+def degrees(nodes, g):
+    return [len(parents(g, v)) + len(children(g, v)) for v in nodes]
+
+
+def sortbydegree(nodes, g):
+    idx = np.argsort(degrees(nodes, g))
+    return list(np.asarray(nodes)[idx])
 
 
 def hide_random(g, ratio):

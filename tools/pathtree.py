@@ -142,6 +142,25 @@ class PathTree:
         if not isinstance(nested_loop, PathTree):
             raise TypeError("Nested loop must be a PathTree.")
         self.loopset.add(nested_loop)
+        
+    def _canonical(self):
+        """Return a hashable tuple that captures structure and values."""
+        # preset: use frozenset so {2} == {2}
+        base = frozenset(self.preset) if isinstance(self.preset, set) else self.preset
+        # loopset: turn into frozenset of their canonical forms (recursive)
+        loops = frozenset(
+            (l if isinstance(l, int) else l._canonical())
+            for l in self.loopset
+        )
+        return (base, loops)
+
+    def __eq__(self, other):
+        if not isinstance(other, PathTree):
+            return NotImplemented
+        return self._canonical() == other._canonical()
+
+    def __hash__(self):
+        return hash(self._canonical())
 
     def __repr__(self):
         # If preset is a set with exactly one element, use that element.

@@ -9,7 +9,7 @@ from random import shuffle
 
 from copy import deepcopy
 from pathtree import PathTree, osumset_full
-from pathtreetools import find_maximal_bcliques, full_forward, to_path_forest, forest_to_set
+from pathtreetools import to_path_forest, forest_to_set
 
 g_var_counter = 0
 
@@ -25,84 +25,43 @@ def get_fresh_loop_var():
     g_var_counter += 1
     return var_name
 
-def find_crd_paths(graph, source, target):
+# ---------------------------------------------------------------------
+# Helper utilities
+# ---------------------------------------------------------------------
+def _is_helper(node: int, g: dict) -> bool:
     """
-    Finds all CRD paths from source to target in the graph.
-    A CRD path is a directed path with no repeated cycles.
-
-    :param graph: The input graph (dictionary format).
-    :param source: The starting node.
-    :param target: The ending node.
-    :return: List of tuples (path, total_lag).
+    Return True  ⇢  node is a 1-lag relay that decompress_to_unit_graph
+                    created (one 1-lag tag-1 in-edge, one 1-lag tag-1
+                    out-edge, no self-loop, no tag-2).
+           False ⇢  anything else (observed vertices, bidirected latents,
+                    A-P compression latents, etc.).
     """
-    def dfs(current, path, lag_sum, visited_edges):
-        if current == target:
-            paths.append((path.copy(), lag_sum))
-            return
+    if node not in g:
+        return False
 
-        for neighbor in graph.get(current, {}):
-            edge_lags = graph[current][neighbor].get(1, set())
-            if not edge_lags:  # No valid directed edge
-                continue
+    # ----- outgoing -----
+    out = g[node]
+    if len(out) != 1:
+        return False
+    (child, edict_out), = out.items()
+    if edict_out != {1: {1}}:
+        return False
 
-            # Prevent revisiting edges to break cycles
-            if (current, neighbor) in visited_edges:
-                continue
+    # ----- incoming -----
+    incoming = [
+        edict_in
+        for par, nbrs in g.items()
+        if node in nbrs
+        for edict_in in [nbrs[node]]
+    ]
+    if len(incoming) != 1 or incoming[0] != {1: {1}}:
+        return False
 
-            for lag in edge_lags:
-                path.append(neighbor)
-                visited_edges.add((current, neighbor))  # Mark edge as visited
-                dfs(neighbor, path, lag_sum + lag, visited_edges)
-                visited_edges.remove((current, neighbor))  # Unmark edge
-                path.pop()
+    # ----- self-loop or bidirected? -----
+    if node in out and 2 in out[node]:
+        return False
 
-    paths = []
-    visited_edges = set()
-    dfs(source, [source], 0, visited_edges)
-    return paths
-
-
-def find_h_treks(graph, a, b):
-    """
-    Finds all h-treks (heterogeneous treks) between nodes a and b in the graph.
-
-    :param graph: The input graph (dictionary format).
-    :param a: The first node (end of τ2).
-    :param b: The second node (end of τ1).
-    :return: List of h-treks as tuples (τ1, τ2, e).
-    """
-    h_treks = []
-
-    # Find all potential roots for τ1 (paths to b)
-    potential_x1 = [node for node in graph if find_crd_paths(graph, node, b)]
-    # Find all potential roots for τ2 (paths to a)
-    potential_x2 = [node for node in graph if find_crd_paths(graph, node, a)]
-
-    for x1 in potential_x1:
-        τ1_paths = find_crd_paths(graph, x1, b)
-        for x2 in potential_x2:
-            τ2_paths = find_crd_paths(graph, x2, a)
-
-            # Case 1: τ1 and τ2 start from the same node
-            if x1 == x2:
-                for τ1 in τ1_paths:
-                    for τ2 in τ2_paths:
-                        h_treks.append((τ1, τ2, None))
-            else:
-                # Case 2: Check for a bi-directed edge between x1 and x2
-                if x1 in graph and x2 in graph[x1] and 2 in graph[x1][x2]:
-                    e = graph[x1][x2][2]
-                    for τ1 in τ1_paths:
-                        for τ2 in τ2_paths:
-                            h_treks.append((τ1, τ2, e))
-                elif x2 in graph and x1 in graph[x2] and 2 in graph[x2][x1]:
-                    e = graph[x2][x1][2]
-                    for τ1 in τ1_paths:
-                        for τ2 in τ2_paths:
-                            h_treks.append((τ1, τ2, e))
-
-    return h_treks
-
+    return True
 
 def update_directed_edges(graph, r):
     """
@@ -448,18 +407,30 @@ def merge_weightsets(ab, ah, hb, hh, induced_bidirected=False):
     if induced_bidirected:
         new_base = {abs(y - x) for pt1 in ah_forest for x in get_base_as_set(pt1.preset)
                            for pt2 in hb_forest for y in get_base_as_set(pt2.preset)}
+        if 0 in new_base and len(new_base) > 1:
+            new_base.discard(0)
         pt = PathTree(preset=new_base, loopset=set())
-        forest = [pt]
-        #print("Final merged PathForest:", forest)
-        return forest
+        return [pt]
     else:
         # Instead of summing just the presets, use sum_forests so that the loopset info is preserved.
         indirect_forest = sum_forests(ah_forest, hb_forest)
         # If multiple branches result, merge them into one using unify_forests.
-        if len(indirect_forest) > 1:
+        # Cap the "A-P loop" optimisation: compress only when we have ≥ 3 bases
+        if len(indirect_forest) == 1:
+            bases = get_base_as_set(indirect_forest[0].preset)  # {int,…}
+            if len(bases) <= 2:
+                # Keep it flat: no <d> loop
+                pt_indirect = PathTree(preset=bases, loopset=set())
+            else:
+                pt_indirect = indirect_forest[0]                # OK to keep loop
+        else:
+            # Multiple branches → unify as before (may produce a loop root)
             indirect_forest = unify_forests(indirect_forest, [])
-        pt_indirect = indirect_forest[0]
-        new_preset = pt_indirect.preset  # Combined preset (including any sums from ah and hb)
+            pt_indirect = indirect_forest[0]
+        bases = get_base_as_set(pt_indirect.preset)     # {int,…}
+        if len(bases) <= 2:
+            pt_indirect = PathTree(preset=bases, loopset=set())
+        new_preset = pt_indirect.preset
         
         # If a direct edge delay exists, add it to every branch.
         direct = get_base_as_set(ab)
@@ -483,13 +454,15 @@ def merge_weightsets(ab, ah, hb, hh, induced_bidirected=False):
             else:
                 extra_hh = extra_hh.union(get_base_as_set(hh))
         
+        bases = get_base_as_set(new_preset)
+        if len(bases) == 1:                     # ← new guard
+            extra_hh  = set()
+            nested_hh = set()
         # Combine the self-loop delays with those already in the indirect forest.
         final_loopset = pt_indirect.loopset.union(extra_hh).union(nested_hh)
-        
         pt_final = PathTree(preset=new_preset, loopset=final_loopset)
-        forest = [pt_final]
         #print("Final merged PathForest:", forest)
-        return forest
+        return [pt_final]
 def add_self_loops(forest, hh):
     """
     Attach self-loop delays from hh to each PathTree in the forest.
@@ -598,9 +571,13 @@ def merge_forest_by_base(forest):
     # 🔸 final visual condensation
     return _condense_flat_roots(flat_forest)
 
-def hide_node(g, H, zero_incoming=False):
+def hide_node(g, H, *, zero_incoming=False):
     """
     Remove vertex H from graph g.
+        • if zero_incoming is True the parent->H delay is forced to 0
+        (used for helper relays inserted by decompress_to_unit_graph).
+
+        • otherwise the real delays into H are preserved (ordinary latents).
     1. For each parent p of H and each child c of H, update directed edges p -> c 
        using merge_weightsets.
     2. Then, regardless of whether H has observed parents, induce bidirected edges among
@@ -621,76 +598,97 @@ def hide_node(g, H, zero_incoming=False):
         raise KeyError(f"Node {H} not found in graph.")
 
     # Children of H: dictionary {child: delay from H->child}
-    ch = children(g, H)
+    ch = {c: to_path_forest(raw) for c, raw in children(g, H).items()}
     # Parents of H: include both directed (etype=1) and bidirected (etype=2) into H
     pa_orig = {}
     for p, nbrs in g.items():
         if H in nbrs:
             for et, raw in nbrs[H].items():
-                # collapse raw (set or PathTree/list) into a pure int‐set
-                if isinstance(raw, set):
-                    lags = raw
-                else:
-                    forest = raw if isinstance(raw, list) else [raw]
-                    lags = forest_to_set(forest)
-                pa_orig.setdefault(p, set()).update(lags)
-    if zero_incoming:
-        # keep every parent, but give it zero delay
-        pa = { p: {0} for p in pa_orig }
-    else:
-        pa = pa_orig
-    # Self-loop at H:
-    sl = g[H][H][1] if H in g[H] else set()
+                # raw may be a set(int), a PathTree, or a list[…]
+                pa_orig.setdefault(p, []).extend(
+                    to_path_forest(raw)          # always returns list[PathTree]
+                )
+    pa = {p: {0} for p in pa_orig} if zero_incoming else pa_orig
+    # ---------- robust self-loop fetch ----------
+    # 2) self-loop on H, if any
+    def _self_loop(node):
+        if node not in g or node not in g[node]:
+            return set()
+        raw = g[node][node]
+        if isinstance(raw, dict):
+            raw = raw.get(1, raw.get(2, set()))
+        roots = raw if isinstance(raw, list) else [raw]
+        return forest_to_set(roots) if not isinstance(raw, set) else raw
+
+    sl = _self_loop(H)
 
     # Remove H from gg first.
     remove_node(gg, H)
 
-    # --- Branch 1: Update directed edges from observed parents of H to each child c ---
+    # --- Branch 1: update p → c edges -----------------------------------
     if pa:
         for p in pa:
-            if p not in gg:               # ← guard against missing parent
+            if p not in gg:          # parent was deleted earlier
                 continue
             for c in ch:
-                if c in gg[p]:
-                    existing = gg[p][c].get(1, None)
-                else:
-                    existing = None
-
-                pa_weights = pa[p] if pa[p] else set()
-                ch_weights = ch[c] if c in ch else set()
-                sl_weights = sl if sl else set()
-
-                #print(f"For parent={p}, child={c}: existing={bool(existing)}, ah={pa_weights}, hb={ch_weights}, sl={sl_weights}")
-
                 if c == H or p == H:
                     continue
+                if p == c:
+                    was_bidir = False      # a loop is never bidirected
+                    key       = 1
 
-                # new_branch = merge_weightsets(set(), pa_weights, ch_weights, sl_weights, induced_bidirected=False)
+                    existing   = gg[p][p].get(key) if p in gg[p] else None
+                    old_forest = to_path_forest(existing) if existing else []
 
-                # if existing is None:
-                #     gg[p][c] = {1: new_branch}
-                # else:
-                #     if not isinstance(existing, list):
-                #         existing = [existing]
-                #     combined = existing + new_branch
-                #     combined = merge_forest_by_base(combined)
-                #     gg[p][c][1] = combined
-                was_bidir = (
-                    2 in g.get(p, {}).get(H, {}) or 
-                    2 in g.get(H, {}).get(c, {})
-                )
-                new_branch = merge_weightsets(
-                    set(), pa_weights, ch_weights, sl_weights,
-                    induced_bidirected=was_bidir
-                )
+                    new_branch = merge_weightsets(
+                        [], pa[p], ch[c], to_path_forest(sl) if sl else [],
+                        induced_bidirected = False
+                    )
+                    payload = merge_forest_by_base(old_forest + new_branch)
+
+                    gg.setdefault(p, {}).setdefault(p, {})[1] = payload
+                    continue
+
+                # is the composite edge directed or bidirected?
+                was_bidir = (2 in g.get(p, {}).get(H, {}) and
+                            2 in g.get(H, {}).get(c, {}))
                 key = 2 if was_bidir else 1
 
-                old = gg.setdefault(p, {}).setdefault(c, {}).get(key)
-                if old is None:
-                    gg[p][c][key] = new_branch
-                else:
-                    old_list = old if isinstance(old, list) else [old]
-                    gg[p][c][key] = merge_forest_by_base(old_list + new_branch)
+                # what is already on p → c (if anything)
+                existing    = gg[p][c].get(key) if c in gg[p] else None
+                old_forest  = to_path_forest(existing) if existing is not None else []
+
+                # weights
+                pa_w = pa[p]
+                ch_w = ch[c]
+                sl_w = to_path_forest(sl) if sl else []
+
+                # new branch through latent H
+                new_branch = merge_weightsets([], pa_w, ch_w, sl_w,
+                                            induced_bidirected=was_bidir)
+
+                payload = merge_forest_by_base(old_forest + new_branch)
+
+                # ── ZERO-LAG TIDYING for *both* key==1 and key==2 ──────────
+                if key == 2:
+                    pure_zero_before = (
+                        old_forest and all(pt.preset == {0} for pt in old_forest)
+                    )
+
+                    if pure_zero_before:              # edge was exactly {0} already
+                        for pt in payload:
+                            pt.preset = {0}
+                    else:
+                        had_zero_old = any(0 in pt.preset for pt in old_forest)
+                        for pt in payload:
+                            if 0 in pt.preset and len(pt.preset) > 1 and not had_zero_old:
+                                pt.preset.discard(0)
+                # ────────────────────────────────────────────────────────────
+
+                gg.setdefault(p, {}).setdefault(c, {})[key] = payload
+    # --------------------------------------------------------------------
+
+
     # --- Branch 2: Always induce bidirected edges among all pairs of children of H ---
     if ch and (len(ch) > 1):
         children_list = list(ch.keys())
@@ -728,11 +726,52 @@ def hide_node(g, H, zero_incoming=False):
                 if further not in gg[closer]:
                     gg[closer][further] = {}
 
-                # Store the induced bidirected edge as a list.
-                gg[closer][further].setdefault(2, [])
-                gg[closer][further][2].extend(forest)
-                gg[closer][further][2] = merge_forest_by_base(gg[closer][further][2])
+                # ── NEW: merge into whichever orientation already exists ─────────────
+                if 2 in gg.get(closer, {}).get(further, {}):          # same orientation
+                    old_forest   = to_path_forest(gg[closer][further][2])
+                    payload      = merge_forest_by_base(old_forest + forest)
 
+                    pure_zero_before = (
+                        old_forest and all(pt.preset == {0} for pt in old_forest)
+                    )
+                    if pure_zero_before:
+                        # keep it *exactly* {0}; discard any newcomers
+                        for pt in payload:
+                            pt.preset = {0}
+                    else:
+                        had_zero_old = any(0 in pt.preset for pt in old_forest)
+                        for pt in payload:
+                            if 0 in pt.preset and len(pt.preset) > 1 and not had_zero_old:
+                                pt.preset.discard(0)
+
+                    gg[closer][further][2] = payload
+
+                elif 2 in gg.get(further, {}).get(closer, {}):               # opposite orientation
+                    old_forest = to_path_forest(gg[further][closer][2])
+                    payload    = merge_forest_by_base(old_forest + forest)
+
+                    # ■ keep a pure {0} exactly as {0}
+                    if all(pt.preset == {0} for pt in old_forest):
+                        for pt in payload:
+                            pt.preset = {0}
+
+                    # store on the existing (opposite) edge and stop
+                    for pt in payload:                       # never keep 0 with other lags
+                        if 0 in pt.preset and len(pt.preset) > 1:
+                            pt.preset.discard(0)
+                    gg[further][closer][2] = payload
+                    continue                                 # done with this child-pair
+
+                else:                                        # edge doesn’t exist yet
+                    payload = merge_forest_by_base(forest)
+
+                # tidy up: drop a 0 that’s mixed with non-zeros
+                for pt in payload:
+                    if 0 in pt.preset and len(pt.preset) > 1:
+                        pt.preset.discard(0)
+
+                gg.setdefault(closer, {}).setdefault(further, {})[2] = payload
+                # ────────────────────────────────────────────────────────────────────
     # Cleanup: remove any leftover references to H in the graph.
     for node in list(gg.keys()):
         if H in gg[node]:
@@ -776,7 +815,7 @@ def hide_node(g, H, zero_incoming=False):
 
     return gg
 
-def hide_nodes(g, nodelist, dosort=True):
+def hide_nodes_old(g, nodelist, dosort=True):
     nodeset = set()  # make sure not to delete a node twice
     if dosort: nodelist = sortbydegree(nodelist, g)
     gg = deepcopy(g)
@@ -785,27 +824,30 @@ def hide_nodes(g, nodelist, dosort=True):
         gg = hide_node(gg, n)
         nodeset.add(n)
     return gg
+def hide_nodes(g, latents, *, zero_incoming=False):
+    gg        = deepcopy(g)
+    remaining = set(latents)
+    while remaining:
+        changed = False
+        for H in list(remaining):
+            if H not in gg:
+                remaining.discard(H)
+                continue
+            gg_new = hide_node(gg, H, zero_incoming=zero_incoming)
+            if gg_new != gg:
+                gg       = gg_new
+                remaining.discard(H)
+                changed  = True
+        if not changed:
+            break
+    return gg
 
 def degrees(nodes, g):
     return [len(parents(g, v)) + len(children(g, v)) for v in nodes]
 
-
 def sortbydegree(nodes, g):
     idx = np.argsort(degrees(nodes, g))
     return list(np.asarray(nodes)[idx])
-
-
-def hide_random(g, ratio):
-    """
-    Hire random modes in the `ratio` proportion from graph g
-    :param g: input graph
-    :param ratio: what percentage of nodes to hide
-    :return: the graph with hidden variables
-    """
-    nodes = g.keys()
-    shuffle(nodes)
-    return hide_nodes(g, nodes[:int(len(g) * ratio)])
-
 
 def print_ws(ws):
     print ('{'),

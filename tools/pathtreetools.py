@@ -236,7 +236,7 @@ def decompress_to_unit_graph(obs_graph):
     next_latent   = max(G0) + 1
     bidir_latents = set()
 
-    seen_bidir = set()          # NEW  unordered pairs already handled
+    seen_bidir = set()         # unordered pairs already handled
 
     for u, nbrs in G0.items():
         for v, ed in nbrs.items():
@@ -247,19 +247,26 @@ def decompress_to_unit_graph(obs_graph):
 
             # (B) explode each bidirected lag
             if 2 in ed:
-                pair = tuple(sorted((u, v)))   # {u,v} as an unordered key
-                if pair in seen_bidir:
-                    continue                   # already processed this pair
+                pair = tuple(sorted((u, v)))   # unordered key ▸ skip both orientations
+                if pair in seen_bidir: # skip only the same direction
+                    continue
                 seen_bidir.add(pair)
 
                 for L in sorted(ed[2]):        # keep *all* bidirected lags
+                    # ── guard for unit-lag bidirected edge ──
+                    if L in (0, 1):
+                        G1.setdefault(u, {}) \
+                        .setdefault(v, {}) \
+                        .setdefault(2, set()) \
+                        .add(L)                      # keep it verbatim
+                        continue                   # skip helper-node creation
+                    # ─────────────────
                     H = next_latent; next_latent += 1
                     bidir_latents.add(H)
-
-                    # H → u   (lag 1)
-                    G1.setdefault(H, {})[u] = {1: {1}}
-                    # H → v   (lag L+1)   (integer lag, no chain yet)
-                    G1[H][v] = {1: {L + 1}}
+                    # parent u  ──(tag 2, lag 1)──►  H
+                    G1.setdefault(u, {})[H] = {2: {1}}
+                    # child  H  ──(tag 2, lag L+1)──►  v
+                    G1.setdefault(H, {})[v] = {2: {L + 1}}
 
     # ── Step 1½: compress A-P lag-sets into single latent + self-loop ──
     G2 = deepcopy(G1)        # we’ll delete / add edges inside the loop
@@ -268,7 +275,7 @@ def decompress_to_unit_graph(obs_graph):
             if u == v or 1 not in ed:
                 continue
             L = ed[1]
-            if len(L) < 2:
+            if len(L) < 3:
                 continue
             a = min(L)
             d = gcd(*[x - a for x in L])
@@ -305,53 +312,64 @@ def decompress_to_unit_graph(obs_graph):
     # ── Step 2: expand *non-self* integer lags to unit chains ──────────
     G_unit = {}
     for u, nbrs in Gdir.items():
-        G_unit.setdefault(u, {})
-                # ▸ 1.  Skip the special latents that came from bidirected edges
+        G_unit.setdefault(u, {})            # keep every observed parent node
+
         if u in bidir_latents:
-            # just copy their integer-lag edges verbatim
-            for v, ed in nbrs.items():
-                G_unit[u][v] = {1: set(ed[1])}
-            continue          # go straight to the next u
-        # NEW: remember the helper nodes we may create for each lag length
-        # **only for this parent u**
-        chain_cache = {}          #  key = L   value = list of helper nodes
-
-        for v, ed in nbrs.items():
-            lags = ed[1]
-
-            for L in sorted(lags):
-
-                # (a) keep self-loops as they are
-                if u == v:
+            for v, ed in nbrs.items():      # ed may contain tag 1 and/or tag 2
+                for et, lags in ed.items():
                     G_unit[u]\
-                        .setdefault(u, {})\
-                        .setdefault(1, set())\
-                        .add(L)
-                    continue
+                        .setdefault(v, {})\
+                        .setdefault(et, set())\
+                        .update(lags)
+            continue 
+        chain_cache = {}        # key = L, value = (helpers, tag)
 
-                # (b) unit lag – nothing to expand
-                if L == 1:
-                    G_unit[u].setdefault(v, {})[1] = {1}
-                    continue
+        # ▸ 2) Expand every integer-lag edge (directed **or bidirected**)
+        for v, ed in nbrs.items():
+            for et, lags in ed.items():
+                for L in sorted(lags):
 
-                # (c) L > 1  →  reuse or build a chain of length (L-1)
-                if L in chain_cache:
-                    # we have already built this chain once, just re-use its tail
-                    tail = chain_cache[L][-1] if chain_cache[L] else u
-                    G_unit.setdefault(tail, {})[v] = {1: {1}}
-                    continue
+                    # (a0) zero-lag between distinct nodes – keep verbatim
+                    if L == 0:
+                        G_unit[u]\
+                          .setdefault(v, {})\
+                          .setdefault(et, set())\
+                          .add(0)
+                        continue
+                    # (a) keep self-loops as they are
+                    if u == v:
+                        G_unit[u].setdefault(u, {}).setdefault(et, set()).add(L)
+                        continue
 
-                # otherwise build it now and store in cache
-                prev = u
-                helpers = []
-                for _ in range(L - 1):
-                    H = next_latent; next_latent += 1
-                    G_unit.setdefault(prev, {})[H] = {1: {1}}
-                    helpers.append(H)
-                    prev = H
-                # helpers[-1] is the tail of the chain
-                chain_cache[L] = helpers
-                G_unit.setdefault(prev, {})[v] = {1: {1}}
+                    # (b) unit lag – nothing to expand
+                    if L == 1:
+                        G_unit[u].setdefault(v, {}).setdefault(et, set()).add(1)
+                        continue
+
+                    # (c) L > 1  → reuse or build a helper chain of length L-1
+                    if L in chain_cache:
+                        helpers, tag = chain_cache[L]
+                        tail = helpers[-1] if helpers else u
+                        G_unit.setdefault(tail, {}).setdefault(v, {}).setdefault(tag, set()).add(1)
+                        continue
+
+                    # build the chain now and memoise it
+                    prev     = u
+                    helpers  = []
+                    for _ in range(L - 1):
+                        H = next_latent; next_latent += 1
+                        G_unit.setdefault(prev, {})\
+                            .setdefault(H, {})\
+                            .setdefault(et, set())\
+                            .add(1)
+                        helpers.append(H)
+                        prev = H
+                    chain_cache[L] = (helpers, et)
+
+                    G_unit.setdefault(prev, {})\
+                        .setdefault(v, {})\
+                        .setdefault(et, set())\
+                        .add(1)
 
     # ── Step 3: ensure every observed node still appears ───────────────
     for u in obs_graph:
@@ -433,26 +451,6 @@ def compute_edge_lags(graph, bclique):
                     forest = raw if isinstance(raw, list) else [raw]
                     lags |= forest_to_set(forest)
             edge_lags[(v1, v2)] = lags
-    return edge_lags
-
-def compute_directed_lags(g, v, w, unobserved):
-    """
-    Compute d_O[v, w] using CRD paths.
-    """
-    paths = find_crd_paths(g, v, w, unobserved)  # Implement pathfinding logic
-    edge_lags = set()
-    for path in paths:
-        edge_lags.update(compute_path_length(path))  # Aggregate path lengths
-    return edge_lags
-
-def compute_bi_directed_lags(g, v, w, unobserved):
-    """
-    Compute b_O[v, w] using h-treks.
-    """
-    treks = find_h_treks(g, v, w, unobserved)  # Implement h-trek logic
-    edge_lags = set()
-    for trek in treks:
-        edge_lags.update(compute_trek_lags(trek))  # Aggregate trek lags
     return edge_lags
 
 class SolutionNotFoundInTime(Exception):

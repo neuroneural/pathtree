@@ -161,6 +161,14 @@ class PathTree:
 
     def __hash__(self):
         return hash(self._canonical())
+    def __lt__(self, other):
+        """
+        Provide a total ordering so PathTree objects can be compared
+        when they end up in a heap or sorted list.
+        """
+        if not isinstance(other, PathTree):
+            return NotImplemented
+        return self._canonical() < other._canonical()
 
     def __repr__(self):
         # If preset is a set with exactly one element, use that element.

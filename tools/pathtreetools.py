@@ -324,8 +324,10 @@ def decompress_to_unit_graph(obs_graph):
             for et, lags in ed.items():
                 for L in sorted(lags):
                     # --- special case: bidirected with (0,<1>) ---
-                    if et == 2 and L == 0 and path_repr == "<1>":
-                    # (a0) zero-lag between distinct nodes – keep verbatim
+                    
+
+
+                    
                     if L == 0:
                         G_unit[u]\
                           .setdefault(v, {})\

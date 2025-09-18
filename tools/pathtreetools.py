@@ -17,7 +17,7 @@ def to_path_forest(x):
     If x is:
       - an int: return [PathTree(preset={x}, loopset=set())]
       - a set: return [PathTree(preset={b}, loopset=set()) for each b in x]
-      - a PathTree: return [x]
+      - a PathForest: return [x]
       - a list (of PathTrees): return x
     """
     if isinstance(x, list):
@@ -201,11 +201,6 @@ def full_forward(raw_graph, observed_nodes):
             G[u][v] = {1: lags}
     return G
 
-from math import gcd
-from copy import deepcopy
-from pathtreetools import forest_to_set
-from pathtree import PathTree          # only needed for type check
-
 def decompress_to_unit_graph(obs_graph):
     """
     1) Collapse any PathTree to an integer lag-set.
@@ -328,7 +323,8 @@ def decompress_to_unit_graph(obs_graph):
         for v, ed in nbrs.items():
             for et, lags in ed.items():
                 for L in sorted(lags):
-
+                    # --- special case: bidirected with (0,<1>) ---
+                    if et == 2 and L == 0 and path_repr == "<1>":
                     # (a0) zero-lag between distinct nodes – keep verbatim
                     if L == 0:
                         G_unit[u]\

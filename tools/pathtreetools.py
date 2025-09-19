@@ -230,7 +230,6 @@ def decompress_to_unit_graph(obs_graph):
     G1 = {}
     next_latent   = max(G0) + 1
     bidir_latents = set()
-
     seen_bidir = set()         # unordered pairs already handled
 
     for u, nbrs in G0.items():
@@ -247,20 +246,31 @@ def decompress_to_unit_graph(obs_graph):
                     continue
                 seen_bidir.add(pair)
 
-                for L in sorted(ed[2]):        # keep *all* bidirected lags
-                    # ── guard for unit-lag bidirected edge ──
-                    if L in (0, 1):
-                        G1.setdefault(u, {}) \
-                        .setdefault(v, {}) \
-                        .setdefault(2, set()) \
-                        .add(L)                      # keep it verbatim
-                        continue                   # skip helper-node creation
-                    # ─────────────────
+                S = set(ed[2])
+
+                # special case: if bidirected lag set is exactly {0}, synthesize a latent
+                if S == {0}:
                     H = next_latent; next_latent += 1
                     bidir_latents.add(H)
-                    # parent u  ──(tag 2, lag 1)──►  H
+                    # latent H points to both endpoints with unit directed edges
+                    G1.setdefault(H, {}).setdefault(u, {})[1] = {1}
+                    G1.setdefault(H, {}).setdefault(v, {})[1] = {1}
+                    continue
+
+                # keep lone {1} verbatim
+                if S == {1}:
+                    G1.setdefault(u, {}).setdefault(v, {}).setdefault(2, set()).add(1)
+                    continue
+
+                # fallback: explode each bidirected lag > 1
+                for L in sorted(S):
+                    if L in (0, 1):
+                        continue  # already handled above
+                    H = next_latent; next_latent += 1
+                    bidir_latents.add(H)
+                    # parent u ──(tag 2, lag 1)──► H
                     G1.setdefault(u, {})[H] = {2: {1}}
-                    # child  H  ──(tag 2, lag L+1)──►  v
+                    # child  H ──(tag 2, lag L+1)──► v
                     G1.setdefault(H, {})[v] = {2: {L + 1}}
 
     # ── Step 1½: compress A-P lag-sets into single latent + self-loop ──
@@ -327,7 +337,7 @@ def decompress_to_unit_graph(obs_graph):
                     
 
 
-                    
+
                     if L == 0:
                         G_unit[u]\
                           .setdefault(v, {})\
@@ -370,7 +380,10 @@ def decompress_to_unit_graph(obs_graph):
                         .add(1)
 
     # ── Step 3: ensure every observed node still appears ───────────────
+    all_nodes = set(obs_graph.keys())
     for u in obs_graph:
+        all_nodes.update(obs_graph[u].keys())
+    for u in all_nodes:
         G_unit.setdefault(u, {})
 
     return G_unit

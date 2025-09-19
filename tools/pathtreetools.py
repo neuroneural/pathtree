@@ -208,7 +208,7 @@ def decompress_to_unit_graph(obs_graph):
     3) Detect arithmetic-progression directed edges and encode them
        with a single latent + self-loop (kept unexpanded).
     4) Expand every remaining integer-lag edge to unit-lag chains.
-    5) Ensure all observed nodes still appear.
+    5) Ensure all observed nodes appear.
     """
 
     # ── Step 0: normalise every edge to {etype: set(int)} ──────────────

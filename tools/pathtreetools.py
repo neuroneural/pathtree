@@ -210,25 +210,58 @@ def decompress_to_unit_graph(obs_graph):
     4) Expand every remaining integer-lag edge to unit-lag chains.
     5) Ensure all observed nodes appear.
     """
-
+    introduced_latents = []
     # ── Step 0: normalise every edge to {etype: set(int)} ──────────────
+    # Also detect bidirected PathTrees of the form (0,<d>) before collapsing
+    ap_bidir = {}  # key: unordered (u,v) -> d
     G0 = {}
+    existing_ids = set(obs_graph.keys())
     for u, nbrs in obs_graph.items():
+        existing_ids.update(nbrs.keys())
         G0[u] = {}
         for v, ed in nbrs.items():
             collapsed = {}
             for etype, raw in ed.items():
+
+                # inline: detect a (0,<d>) bidirected PathTree
+                if etype == 2 and not isinstance(raw, set):
+                    forest = raw if isinstance(raw, list) else [raw]
+                    if (len(forest) == 1 and isinstance(forest[0], PathTree)):
+                        pt = forest[0]
+                        # check preset = 0
+                        base = pt.preset
+                        if isinstance(base, set):
+                            if len(base) == 1:
+                                base = next(iter(base))
+                            else:
+                                base = None
+                        if base == 0 and len(pt.loopset) == 1:
+                            child = next(iter(pt.loopset))
+                            if isinstance(child, int):
+                                d = child
+                            elif isinstance(child, PathTree) and not child.loopset:
+                                cp = child.preset
+                                if isinstance(cp, set) and len(cp) == 1:
+                                    d = next(iter(cp))
+                                else:
+                                    d = cp
+                            else:
+                                d = None
+                            if isinstance(d, int) and d > 0:
+                                ap_bidir[tuple(sorted((u, v)))] = d
+
+                # collapse everything to finite lags as usual
                 if isinstance(raw, set):
                     lags = raw
-                else:                           # list[PathTree] | PathTree
+                else:
                     forest = raw if isinstance(raw, list) else [raw]
                     lags   = forest_to_set(forest)
                 collapsed[etype] = set(lags)
             G0[u][v] = collapsed
 
-    # ── Step 1: move bidirected edges → new latents ───────────────────
+    # ── Step 1: move bidirected edges → new latents
     G1 = {}
-    next_latent   = max(G0) + 1
+    next_latent   = max(existing_ids) + 1
     bidir_latents = set()
     seen_bidir = set()         # unordered pairs already handled
 
@@ -245,6 +278,18 @@ def decompress_to_unit_graph(obs_graph):
                 if pair in seen_bidir: # skip only the same direction
                     continue
                 seen_bidir.add(pair)
+                
+                if pair in ap_bidir:
+                    d = ap_bidir[pair]
+                    H = next_latent; next_latent += 1
+                    introduced_latents.append(H)
+                    bidir_latents.add(H)
+                    # self-loop on H
+                    G1.setdefault(H, {}).setdefault(H, {})[1] = {d}
+                    # arms from H to both endpoints
+                    G1.setdefault(H, {}).setdefault(u, {})[1] = {1}
+                    G1.setdefault(H, {}).setdefault(v, {})[1] = {1}
+                    continue
 
                 S = set(ed[2])
 
@@ -333,11 +378,6 @@ def decompress_to_unit_graph(obs_graph):
         for v, ed in nbrs.items():
             for et, lags in ed.items():
                 for L in sorted(lags):
-                    # --- special case: bidirected with (0,<1>) ---
-                    
-
-
-
                     if L == 0:
                         G_unit[u]\
                           .setdefault(v, {})\
@@ -379,13 +419,14 @@ def decompress_to_unit_graph(obs_graph):
                         .setdefault(et, set())\
                         .add(1)
 
-    # ── Step 3: ensure every observed node still appears ───────────────
+    # ── Step 3: ensure every observed node still appears
     all_nodes = set(obs_graph.keys())
     for u in obs_graph:
         all_nodes.update(obs_graph[u].keys())
     for u in all_nodes:
         G_unit.setdefault(u, {})
-
+    if introduced_latents:
+        print(f"[decompress_to_unit_graph] Introduced new latent nodes: {introduced_latents}")
     return G_unit
 
 

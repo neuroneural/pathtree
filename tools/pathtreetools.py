@@ -367,11 +367,20 @@ def decompress_to_unit_graph(obs_graph):
         if u in bidir_latents:
             for v, ed in nbrs.items():      # ed may contain tag 1 and/or tag 2
                 for et, lags in ed.items():
-                    G_unit[u]\
-                        .setdefault(v, {})\
-                        .setdefault(et, set())\
-                        .update(lags)
-            continue 
+                    for L in sorted(lags):
+                        if u == v and L > 1:
+                            # expand latent self-loop (0,<d>) into a cycle of length d
+                            prev = u
+                            for _ in range(L - 1):
+                                H2 = next_latent; next_latent += 1
+                                G_unit.setdefault(prev, {}).setdefault(H2, {}).setdefault(et, set()).add(1)
+                                prev = H2
+                            G_unit.setdefault(prev, {}).setdefault(u, {}).setdefault(et, set()).add(1)
+                        else:
+                            # keep other edges as-is
+                            G_unit[u].setdefault(v, {}).setdefault(et, set()).add(L)
+            continue
+
         chain_cache = {}        # key = L, value = (helpers, tag)
 
         # ▸ 2) Expand every integer-lag edge (directed **or bidirected**)
@@ -384,9 +393,20 @@ def decompress_to_unit_graph(obs_graph):
                           .setdefault(et, set())\
                           .add(0)
                         continue
-                    # (a) keep self-loops as they are
+
+                    # (a) self-loops
                     if u == v:
-                        G_unit[u].setdefault(u, {}).setdefault(et, set()).add(L)
+                        if u in bidir_latents and L > 1:
+                            # expand the latent's self-loop into a chain of unit lags
+                            prev = u
+                            for _ in range(L):
+                                H = next_latent; next_latent += 1
+                                G_unit.setdefault(prev, {}).setdefault(H, {}).setdefault(et, set()).add(1)
+                                prev = H
+                            G_unit.setdefault(prev, {}).setdefault(u, {}).setdefault(et, set()).add(1)
+                        else:
+                            # ordinary observed-node self-loop, keep as-is
+                            G_unit[u].setdefault(u, {}).setdefault(et, set()).add(L)
                         continue
 
                     # (b) unit lag – nothing to expand

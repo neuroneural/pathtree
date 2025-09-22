@@ -397,17 +397,27 @@ def decompress_to_unit_graph(obs_graph):
                     # (a) self-loops
                     if u == v:
                         if u in bidir_latents and L > 1:
-                            # expand the latent's self-loop into a chain of unit lags
+                            # expand latent self-loop (0,<d>) into a cycle of length d
                             prev = u
-                            for _ in range(L):
-                                H = next_latent; next_latent += 1
-                                G_unit.setdefault(prev, {}).setdefault(H, {}).setdefault(et, set()).add(1)
-                                prev = H
+                            for _ in range(L - 1):
+                                H2 = next_latent; next_latent += 1
+                                G_unit.setdefault(prev, {}).setdefault(H2, {}).setdefault(et, set()).add(1)
+                                prev = H2
                             G_unit.setdefault(prev, {}).setdefault(u, {}).setdefault(et, set()).add(1)
                         else:
-                            # ordinary observed-node self-loop, keep as-is
-                            G_unit[u].setdefault(u, {}).setdefault(et, set()).add(L)
+                            if L == 1:
+                                # unit self-loop, keep
+                                G_unit[u].setdefault(u, {}).setdefault(et, set()).add(1)
+                            else:
+                                # expand observed self-loop into a chain of length L
+                                prev = u
+                                for _ in range(L):
+                                    H = next_latent; next_latent += 1
+                                    G_unit.setdefault(prev, {}).setdefault(H, {}).setdefault(et, set()).add(1)
+                                    prev = H
+                                G_unit.setdefault(prev, {}).setdefault(u, {}).setdefault(et, set()).add(1)
                         continue
+
 
                     # (b) unit lag – nothing to expand
                     if L == 1:
@@ -1164,13 +1174,17 @@ def apply_minimal_refinement(graph, bcliques, cap=5):
                     step  = gcd(*diffs) if len(diffs) > 1 else 0
 
                     # arithmetic progression → single-loop *only* if it stays inside lag_set
-                    if step and lag_set == {a + k*step for k in range(len(lag_set))}:
-                        cand = PathTree(preset={a}); cand.add_loop(step)
-                        gen  = forest_to_set(cand, cap=cap)
-                        if gen.issubset(lag_set):          # ✓ safe -- keep it
-                            graph[v1][v2][etype] = cand
-                            continue                       # done
+                    if step:
+                        candidate = set(range(a, max(lag_set) + 1, step))
+                        if candidate == lag_set:
+                            cand = PathTree(preset={a})
+                            cand.add_loop(step)
+                            gen = forest_to_set(cand, cap=cap)
+                            if gen.issubset(lag_set):  # ✓ safe -- keep it
+                                graph[v1][v2][etype] = cand
+                                continue
                     # else fall through to “explicit” representation
+
 
                     # original heuristics
                     if len(lag_set) == 2:
@@ -1247,9 +1261,12 @@ def unify_edge_representation(graph):
         for v in graph[u]:
             edge_data = graph[u][v]
             if 1 in edge_data:  # directed
-                if isinstance(edge_data[1], set):
-                    # Wrap the set in a PathTree
+                if len(edge_data[1]) == 1:
+                    # single element → simple preset
                     edge_data[1] = PathTree(preset=edge_data[1], loopset=set())
+                else:
+                    # multiple lags → one PathTree per lag
+                    edge_data[1] = [PathTree(preset={e}) for e in sorted(edge_data[1])]
             elif 2 in edge_data:  # bidirected
                 if isinstance(edge_data[2], set):
                     edge_data[2] = PathTree(preset=edge_data[2], loopset=set())

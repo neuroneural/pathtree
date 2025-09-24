@@ -33,7 +33,7 @@ def to_path_forest(x):
     else:
         raise TypeError(f"Cannot convert {x} into a path-forest")
 
-def forest_to_set(forest, cap=5):
+def forest_to_set(forest, cap=19):
     """
     Collapse a PathForest into the first `cap` integer lengths,
     allowing loops to repeat indefinitely but stopping once cap are found.
@@ -211,6 +211,7 @@ def decompress_to_unit_graph(obs_graph):
     5) Ensure all observed nodes appear.
     """
     introduced_latents = []
+    print(f"DEBUG: Starting decompress with graph: {obs_graph}")
     # ── Step 0: normalise every edge to {etype: set(int)} ──────────────
     # Also detect bidirected PathTrees of the form (0,<d>) before collapsing
     ap_bidir = {}  # key: unordered (u,v) -> d
@@ -289,6 +290,7 @@ def decompress_to_unit_graph(obs_graph):
                     # arms from H to both endpoints
                     G1.setdefault(H, {}).setdefault(u, {})[1] = {1}
                     G1.setdefault(H, {}).setdefault(v, {})[1] = {1}
+
                     continue
 
                 S = set(ed[2])
@@ -296,10 +298,15 @@ def decompress_to_unit_graph(obs_graph):
                 # special case: if bidirected lag set is exactly {0}, synthesize a latent
                 if S == {0}:
                     H = next_latent; next_latent += 1
+                    introduced_latents.append(H)
                     bidir_latents.add(H)
-                    # latent H points to both endpoints with unit directed edges
+                    G1.setdefault(H, {}).setdefault(H, {})[1] = {1}
+                    G1.setdefault(u, {}).setdefault(H, {})[1] = {1}
+                    G1.setdefault(v, {}).setdefault(H, {})[1] = {1}
+                    # symmetric unit bidirected arms
                     G1.setdefault(H, {}).setdefault(u, {})[1] = {1}
                     G1.setdefault(H, {}).setdefault(v, {})[1] = {1}
+                    
                     continue
 
                 # keep lone {1} verbatim
@@ -369,12 +376,13 @@ def decompress_to_unit_graph(obs_graph):
                 for et, lags in ed.items():
                     for L in sorted(lags):
                         if u == v and L > 1:
-                            # expand latent self-loop (0,<d>) into a cycle of length d
+                            # expand latent self-loop (0,<L>) into a cycle of length L
                             prev = u
-                            for _ in range(L - 1):
-                                H2 = next_latent; next_latent += 1
-                                G_unit.setdefault(prev, {}).setdefault(H2, {}).setdefault(et, set()).add(1)
-                                prev = H2
+                            for _ in range(L - 1):   # <-- only L-1 helpers
+                                H = next_latent; next_latent += 1
+                                G_unit.setdefault(prev, {}).setdefault(H, {}).setdefault(et, set()).add(1)
+                                prev = H
+                            # close the cycle back to u
                             G_unit.setdefault(prev, {}).setdefault(u, {}).setdefault(et, set()).add(1)
                         else:
                             # keep other edges as-is
@@ -396,26 +404,17 @@ def decompress_to_unit_graph(obs_graph):
 
                     # (a) self-loops
                     if u == v:
-                        if u in bidir_latents and L > 1:
-                            # expand latent self-loop (0,<d>) into a cycle of length d
-                            prev = u
-                            for _ in range(L - 1):
-                                H2 = next_latent; next_latent += 1
-                                G_unit.setdefault(prev, {}).setdefault(H2, {}).setdefault(et, set()).add(1)
-                                prev = H2
-                            G_unit.setdefault(prev, {}).setdefault(u, {}).setdefault(et, set()).add(1)
+                        if L == 1:
+                        # unit self-loop, keep
+                            G_unit[u].setdefault(u, {}).setdefault(et, set()).add(1)
                         else:
-                            if L == 1:
-                                # unit self-loop, keep
-                                G_unit[u].setdefault(u, {}).setdefault(et, set()).add(1)
-                            else:
-                                # expand observed self-loop into a chain of length L
-                                prev = u
-                                for _ in range(L):
-                                    H = next_latent; next_latent += 1
-                                    G_unit.setdefault(prev, {}).setdefault(H, {}).setdefault(et, set()).add(1)
-                                    prev = H
-                                G_unit.setdefault(prev, {}).setdefault(u, {}).setdefault(et, set()).add(1)
+                            # expand observed self-loop into a chain of length L
+                            # prev = u
+                            # for _ in range(L - 1):
+                            #     H = next_latent; next_latent += 1
+                            #     G_unit.setdefault(prev, {}).setdefault(H, {}).setdefault(et, set()).add(1)
+                            #     prev = H
+                            G_unit.setdefault(prev, {}).setdefault(u, {}).setdefault(et, set()).add(1)
                         continue
 
 
@@ -425,10 +424,11 @@ def decompress_to_unit_graph(obs_graph):
                         continue
 
                     # (c) L > 1  → reuse or build a helper chain of length L-1
-                    if L in chain_cache:
-                        helpers, tag = chain_cache[L]
+                    key = (u, et, L)
+                    if key in chain_cache and u != v:
+                        helpers = chain_cache[key]
                         tail = helpers[-1] if helpers else u
-                        G_unit.setdefault(tail, {}).setdefault(v, {}).setdefault(tag, set()).add(1)
+                        G_unit.setdefault(tail, {}).setdefault(v, {}).setdefault(et, set()).add(1)
                         continue
 
                     # build the chain now and memoise it
@@ -442,7 +442,7 @@ def decompress_to_unit_graph(obs_graph):
                             .add(1)
                         helpers.append(H)
                         prev = H
-                    chain_cache[L] = (helpers, et)
+                    chain_cache[key] = helpers
 
                     G_unit.setdefault(prev, {})\
                         .setdefault(v, {})\
@@ -457,6 +457,7 @@ def decompress_to_unit_graph(obs_graph):
         G_unit.setdefault(u, {})
     if introduced_latents:
         print(f"[decompress_to_unit_graph] Introduced new latent nodes: {introduced_latents}")
+        print(f"DEBUG: Total nodes in output: {sorted(G_unit.keys())}")
     return G_unit
 
 
@@ -1180,6 +1181,7 @@ def apply_minimal_refinement(graph, bcliques, cap=5):
                             cand = PathTree(preset={a})
                             cand.add_loop(step)
                             gen = forest_to_set(cand, cap=cap)
+                            print("DEBUG: collapsing", cand, "→", gen, "vs target", lag_set)
                             if gen.issubset(lag_set):  # ✓ safe -- keep it
                                 graph[v1][v2][etype] = cand
                                 continue

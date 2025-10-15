@@ -93,32 +93,6 @@ def extends(pt, lag: int, Eij: set[int]) -> bool:
     # we only allow this loop if it doesn't introduce _any_ new delays
     return all_lags.issubset(Eij)
 
-def refine_edge(pt: PathTree, Eij: set[int]) -> PathTree:
-    """
-    Starting from pt.preset = base, add exactly the deltas needed so that
-    every e in Eij can be generated (i.e. e = base + sum of loops).
-    """
-    # 1) extract base
-    if isinstance(pt.preset, set):
-        assert len(pt.preset) == 1
-        base = next(iter(pt.preset))
-    else:
-        base = pt.preset
-
-    # 2) for each observed lag > base, try exactly delta = e-base
-    for e in sorted(Eij):
-        if e <= base:
-            continue
-        delta = e - base
-        if extends(pt, delta, Eij):
-            pt.add_loop(delta)
-    generated = forest_to_set(pt)
-    if generated != Eij:
-        # fallback: a “flat” forest that exactly matches Eij, no loops
-        return PathTree(preset=Eij, loopset=set())
-
-    return pt
-
 def extract_bidirected(G):
     next_latent = max(G) + 1
     seen = set()
@@ -138,70 +112,103 @@ def extract_bidirected(G):
                     if not G[v][u]: del G[v][u]
     return G
 
-def forward(graph, observed_nodes, original_nodes):
-    from latents import hide_node
+def expand_pathtree_selfloop(node, pt, next_latent):
+    """Expand a PathTree self-loop (preset,<loopset>) into explicit graph fragment."""
+    preset = pt.preset
+    if isinstance(preset, set):
+        if len(preset) == 1:
+            preset = next(iter(preset))
+        else:
+            raise ValueError(f"Unsupported multi-element preset in PathTree: {preset}")
 
-    G = deepcopy(graph)
-    # split latents so injected come first
-    all_latents      = [n for n in G if n not in observed_nodes]
-    injected_latents = [n for n in all_latents if n not in original_nodes]
-    original_latents = [n for n in all_latents if n in     original_nodes]
+    loopset = pt.loopset
+    if isinstance(loopset, set) and len(loopset) == 1:
+        loopset = {next(iter(loopset))}
 
-    for H in injected_latents + original_latents:
-        # injected ⇒ zero_incoming=True, original ⇒ zero_incoming=False
-        zero_in = (H not in original_nodes)
-        G = hide_node(G, H, zero_incoming=zero_in)
+    Gfrag = {}
+    prev = node
+    latents = []
 
-        # now recompress every edge exactly as before
-        for u in list(G):
-            for v in list(G[u]):
-                forest   = G[u][v].get(1) or G[u][v].get(2)
-                new_lags = forest_to_set(forest)
-                et       = 1 if 1 in G[u][v] else 2
-                G[u][v]  = {et: new_lags}
+    # use integer preset safely here
+    for _ in range(preset - 1):
+        H = next_latent; next_latent += 1
+        Gfrag.setdefault(prev, {}).setdefault(H, {}).setdefault(1, set()).add(1)
+        prev = H
+        latents.append(H)
 
-    return G
+    # connect back to node
+    Gfrag.setdefault(prev, {}).setdefault(node, {}).setdefault(1, set()).add(1)
 
-def full_forward(raw_graph, observed_nodes):
-    # 1) record which nodes are “real”
-    original = set(raw_graph.keys())
+    # expand loopset recursively if present
+    for child in loopset:
+        if isinstance(child, int):
+            Gfrag.setdefault(prev, {}).setdefault(prev, {}).setdefault(1, set()).add(child)
+        elif isinstance(child, PathTree):
+            frag2, next_latent = expand_pathtree_selfloop(prev, child, next_latent)
+            # merge frag2
+            for x, nbrs2 in frag2.items():
+                for y, ed2 in nbrs2.items():
+                    for et2, lags2 in ed2.items():
+                        Gfrag.setdefault(x, {}).setdefault(y, {}).setdefault(et2, set()).update(lags2)
+        else:
+            raise TypeError(f"Unsupported loopset element: {child}")
 
-    # 2) peel off bidirected edges
-    G = deepcopy(raw_graph)
-    G = extract_bidirected(G)
+    return Gfrag, next_latent
 
-    # 3) wrap whatever remains into PathTree forests (or keep existing ones)
-    for u in list(G):
-        for v in list(G[u]):
-            et      = next(iter(G[u][v]))
-            dat     = G[u][v][et]
-            if isinstance(dat, PathTree):
-                forest = [dat]
-            elif isinstance(dat, list):
-                forest = dat
-            else:
-                forest = to_path_forest(dat)
-            G[u][v] = {et: forest}
 
-    # 4) **one** backward pass is enough to remove *all* latents
-    G = forward(G, observed_nodes, original)
+def expand_pathtree_directed(u, v, pt, next_latent):
+    """
+    Expand a PathTree (preset, <loopset>) where u != v.
+    Produces a chain from u → ... → v, with recursion on the first latent for loopset.
+    """
+    preset = pt.preset
+    loopset = pt.loopset
 
-    # 5) make sure observed nodes still appear
-    for o in observed_nodes:
-        G.setdefault(o, {})
+    edges = {}
+    introduced = []
 
-    for u in list(G):
-        for v in list(G[u]):
-            val = G[u][v].get(1) or G[u][v].get(2)
-            if isinstance(val, set):
-                lags = val
-            else:
-                forest = val if isinstance(val, list) else [val]
-                lags = forest_to_set(forest)
-            G[u][v] = {1: lags}
-    return G
+    # Step 1: if preset <= 1, then it's just u→v with lag= preset (normally 1).
+    if preset <= 1:
+        edges.setdefault(u, {}).setdefault(v, {}).setdefault(1, set()).add(max(1, preset))
+        return edges, introduced, next_latent
 
-def decompress_to_unit_graph(obs_graph):
+    # Step 2: build preset-1 latents to delay from u before hitting v
+    prev = u
+    for _ in range(preset - 1):
+        H = next_latent; next_latent += 1
+        introduced.append(H)
+        edges.setdefault(prev, {}).setdefault(H, {}).setdefault(1, set()).add(1)
+        prev = H
+
+    # At this point, prev is the last latent in the preset-delay chain.
+
+    if not loopset:
+        # No recursion: connect directly to v
+        edges.setdefault(prev, {}).setdefault(v, {}).setdefault(1, set()).add(1)
+        return edges, introduced, next_latent
+
+    # Step 3: recurse into loopset on the *first latent* (not u)
+    # We simulate: prev → (expand loopset) → v
+    loop_pt = next(iter(loopset))  # PathTree or int
+    if isinstance(loop_pt, PathTree):
+        loop_edges, loop_introduced, next_latent = expand_pathtree_directed(prev, v, loop_pt, next_latent)
+        # merge
+        for x, nbrs in loop_edges.items():
+            edges.setdefault(x, {})
+            for y, ed in nbrs.items():
+                edges[x].setdefault(y, {})
+                for et, lags in ed.items():
+                    edges[x][y].setdefault(et, set()).update(lags)
+        introduced.extend(loop_introduced)
+    elif isinstance(loop_pt, int):
+        # Just a single lag
+        edges.setdefault(prev, {}).setdefault(v, {}).setdefault(1, set()).add(loop_pt)
+    else:
+        raise ValueError(f"Unexpected loopset element: {loop_pt}")
+
+    return edges, introduced, next_latent
+
+def reverse(obs_graph):
     """
     1) Collapse any PathTree to an integer lag-set.
     2) Pull each bidirected edge u<->v into a latent H.
@@ -254,10 +261,16 @@ def decompress_to_unit_graph(obs_graph):
                 # collapse everything to finite lags as usual
                 if isinstance(raw, set):
                     lags = raw
+                    collapsed[etype] = set(lags)
                 else:
                     forest = raw if isinstance(raw, list) else [raw]
-                    lags   = forest_to_set(forest)
-                collapsed[etype] = set(lags)
+                    # SPECIAL CASE: PathTree self-loop
+                    if u == v and len(forest) == 1 and isinstance(forest[0], PathTree):
+                        collapsed[etype] = forest[0]   # keep full PathTree object
+                    else:
+                        lags = forest_to_set(forest)
+                        collapsed[etype] = set(lags)
+
             G0[u][v] = collapsed
 
     # ── Step 1: move bidirected edges → new latents
@@ -271,7 +284,13 @@ def decompress_to_unit_graph(obs_graph):
 
             # (A) keep directed edge
             if 1 in ed:
-                G1.setdefault(u, {})[v] = {1: set(ed[1])}
+                val = ed[1]
+                if isinstance(val, PathTree) and u == v:
+                    # defer handling of self-loop PathTree to expansion step
+                    G1.setdefault(u, {})[v] = {1: val}
+                else:
+                    # normal finite lag set
+                    G1.setdefault(u, {})[v] = {1: set(val)}
 
             # (B) explode each bidirected lag
             if 2 in ed:
@@ -325,43 +344,84 @@ def decompress_to_unit_graph(obs_graph):
                     # child  H ──(tag 2, lag L+1)──► v
                     G1.setdefault(H, {})[v] = {2: {L + 1}}
 
-    # ── Step 1½: compress A-P lag-sets into single latent + self-loop ──
+    
     G2 = deepcopy(G1)        # we’ll delete / add edges inside the loop
-    for u, nbrs in list(G1.items()):
+        # ── Step 1¾: rewrite observed self-loops u→u with A-P lag sets ──
+    for u, nbrs in list(G2.items()):
+        if u not in nbrs:
+            continue
+        ed = nbrs[u]
+        if 1 not in ed:
+            continue
+        L = ed[1]
+        # skip if it's a PathTree (defer to expand_pathtree_selfloop later)
+        if isinstance(L, PathTree):
+            continue
+        if not L:
+            continue
+        a = min(L)
+        if a <= 1:
+            continue
+        # compute step d of the arithmetic progression
+        diffs = [x - a for x in L]
+        d = gcd(*diffs) if len(diffs) > 1 else (diffs[0] if diffs else 0)
+        if d == 0:
+            d = 1
+        # remove the original self-loop
+        del G2[u][u]
+        if not G2[u]:
+            del G2[u]
+        # introduce latent
+        H = next_latent; next_latent += 1
+        introduced_latents.append(H)
+        # u ↔ H
+        G2.setdefault(u, {})[H] = {1: {1}}
+        G2.setdefault(H, {})[u] = {1: {1}}
+        # self-loop on H with period d
+        G2[H][H] = {1: {d}}
+
+    # ── Step 1¾-bis: rewrite observed→observed edges u→v with A-P lag sets ──
+    for u, nbrs in list(G2.items()):
         for v, ed in list(nbrs.items()):
             if u == v or 1 not in ed:
                 continue
+
             L = ed[1]
             if len(L) < 3:
-                continue
+                continue  # need enough points to trust AP detection
+
             a = min(L)
-            d = gcd(*[x - a for x in L])
-            if d == 0 or L != {a + k*d for k in range(len(L))}:
-                continue        # not an exact A-P → leave unchanged
-            if a == 1:
+            diffs = [x - a for x in L]
+            d = gcd(*diffs) if len(diffs) > 1 else (diffs[0] if diffs else 0)
+
+            # must be a clean arithmetic progression
+            if d <= 0:
                 continue
-            # ----- rewrite this edge -----------------------------------
+            span = max(L) - a
+            expected = {a + k * d for k in range(span // d + 1)}
+            if L != expected:
+                continue
+
+            # remove original edge u→v
             del G2[u][v]
-            if not G2[u]:            # clean empties
+            if not G2[u]:
                 del G2[u]
-            # (1) u  ->  H   at lag 1
+
+            # introduce latent with a self-loop
             H = next_latent; next_latent += 1
-            # H -> u   (lag 1)
-            G2.setdefault(u, {})[H] = {1: {1}}
-            # (2) self-loop on H  (lag = d)
-            G2.setdefault(H, {})[H] = {1: {d}}
-            # H -> v   (lag a)  (expand to chain of (a-1) unit lags)
-            prev = H
-            if a == 1:
-                # special case: min lag was 1 (shouldn’t actually happen here)
-                G2.setdefault(prev, {})[v] = {1: {1}}
+            introduced_latents.append(H)
+            if d == 1:
+                # Dense progression (contiguous integers)
+                # Just encode it as a simple chain
+                G2.setdefault(u, {})[H] = {1: {1}}
+                G2.setdefault(H, {})[H] = {1: {1}}
+                G2[H][v] = {1: {a}}
             else:
-                # need (a-1) unit edges *including* the final one to v
-                for _ in range(a - 2):          # <-- a-2 intermediates
-                    K = next_latent; next_latent += 1
-                    G2.setdefault(prev, {})[K] = {1: {1}}
-                    prev = K
-                G2.setdefault(prev, {})[v] = {1: {1}}   # final edge
+                # Sparse progression (step > 1)
+                G2.setdefault(u, {})[H] = {1: {1}}
+                G2.setdefault(H, {})[H] = {1: {d}}
+                lag_to_v = max(1, a - 1)   # ensure nonzero
+                G2[H][v] = {1: {lag_to_v}}
 
     # directed-only graph to expand
     Gdir = G2
@@ -373,7 +433,32 @@ def decompress_to_unit_graph(obs_graph):
 
         if u in bidir_latents:
             for v, ed in nbrs.items():      # ed may contain tag 1 and/or tag 2
-                for et, lags in ed.items():
+                for et, raw in ed.items():
+
+                    # handle PathTree self-loop case
+                    if u == v and isinstance(raw, PathTree):
+                        frag, next_latent = expand_pathtree_selfloop(u, raw, next_latent)
+                        for x, nbrs2 in frag.items():
+                            for y, ed2 in nbrs2.items():
+                                for et2, lags2 in ed2.items():
+                                    G_unit.setdefault(x, {}).setdefault(y, {}).setdefault(et2, set()).update(lags2)
+                        continue
+
+                    # otherwise treat as set of ints
+                    if isinstance(raw, PathTree):
+                        if u == v:
+                            # self-loop PathTree
+                            frag, next_latent = expand_pathtree_selfloop(u, raw, next_latent)
+                            for x, nbrs2 in frag.items():
+                                for y, ed2 in nbrs2.items():
+                                    for et2, lags2 in ed2.items():
+                                        G_unit.setdefault(x, {}).setdefault(y, {}).setdefault(et2, set()).update(lags2)
+                            continue
+                        else:
+                            # directed PathTree, just collapse to finite set
+                            lags = forest_to_set([raw])
+                    else:
+                        lags = raw if isinstance(raw, set) else set(raw)
                     for L in sorted(lags):
                         if u == v and L > 1:
                             # expand latent self-loop (0,<L>) into a cycle of length L
@@ -393,7 +478,18 @@ def decompress_to_unit_graph(obs_graph):
 
         # ▸ 2) Expand every integer-lag edge (directed **or bidirected**)
         for v, ed in nbrs.items():
-            for et, lags in ed.items():
+            for et, raws in ed.items():
+                # handle PathTree self-loop case
+                if u == v and isinstance(raw, PathTree):
+                    frag, next_latent = expand_pathtree_selfloop(u, raw, next_latent)
+                    for x, nbrs2 in frag.items():
+                        for y, ed2 in nbrs2.items():
+                            for et2, lags2 in ed2.items():
+                                G_unit.setdefault(x, {}).setdefault(y, {}).setdefault(et2, set()).update(lags2)
+                    continue
+
+                # otherwise treat as set of ints
+                lags = raw if isinstance(raw, set) else set(raw)
                 for L in sorted(lags):
                     if L == 0:
                         G_unit[u]\
@@ -404,17 +500,19 @@ def decompress_to_unit_graph(obs_graph):
 
                     # (a) self-loops
                     if u == v:
-                        if L == 1:
-                        # unit self-loop, keep
-                            G_unit[u].setdefault(u, {}).setdefault(et, set()).add(1)
-                        else:
-                            # expand observed self-loop into a chain of length L
-                            # prev = u
-                            # for _ in range(L - 1):
-                            #     H = next_latent; next_latent += 1
-                            #     G_unit.setdefault(prev, {}).setdefault(H, {}).setdefault(et, set()).add(1)
-                            #     prev = H
-                            G_unit.setdefault(prev, {}).setdefault(u, {}).setdefault(et, set()).add(1)
+                        # if L == 1:
+                        # # unit self-loop, keep
+                        G_unit[u].setdefault(u, {}).setdefault(et, set()).add(L)
+                        # else:
+                        #     # Instead of unrolling, create ONE latent with a self-loop
+                        #     H = next_latent; next_latent += 1
+                        #     introduced_latents.append(H)
+                        #     # arms
+                        #     G_unit.setdefault(u, {}).setdefault(H, {}).setdefault(et, set()).add(1)
+                        #     G_unit.setdefault(H, {}).setdefault(u, {}).setdefault(et, set()).add(1)
+                        #     # latent self-loop with base period L
+                        #     G_unit.setdefault(H, {}).setdefault(H, {}).setdefault(et, set()).add(L)
+
                         continue
 
 

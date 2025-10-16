@@ -1283,8 +1283,33 @@ def apply_minimal_refinement(graph, bcliques, cap=5):
                             if gen.issubset(lag_set):  # ✓ safe -- keep it
                                 graph[v1][v2][etype] = cand
                                 continue
-                    # else fall through to “explicit” representation
 
+                                                # ── IMPROVED: partial AP detection ──
+                        # Require ≥3 terms, full contiguity, and maximize coverage
+                        best_cover, best_start, best_s, best_seq = 0, None, None, None
+                        Lmax = max(lag_set)
+                        for start in sorted(lag_set):
+                            for s in range(1, Lmax - start + 1):
+                                seq = [x for x in range(start, Lmax + 1, s) if x in lag_set]
+                                if len(seq) < 3:
+                                    continue
+                                # contiguity: all expected terms up to seq[-1] exist
+                                if set(seq) != set(range(start, seq[-1] + 1, s)):
+                                    continue
+                                if len(seq) > best_cover:
+                                    best_cover, best_start, best_s, best_seq = len(seq), start, s, set(seq)
+
+                        if best_cover >= 3:
+                            leftovers = sorted(lag_set - best_seq)
+                            trees = [PathTree(preset={best_start}, loopset={best_s})] + [
+                                PathTree(preset={x}) for x in leftovers
+                            ]
+                            print(f"DEBUG: partial collapse {best_start}+{best_s}*k → seq={sorted(best_seq)}, leftovers={leftovers}")
+                            graph[v1][v2][etype] = trees
+                            continue
+
+                        continue
+                    # end if step
 
                     # original heuristics
                     if len(lag_set) == 2:
@@ -1305,6 +1330,7 @@ def apply_minimal_refinement(graph, bcliques, cap=5):
                             PathTree(preset={e}) for e in sorted(lag_set)
                         ]
     return graph
+
 
 def pt2seq(pt, num):
     if not pt.children:

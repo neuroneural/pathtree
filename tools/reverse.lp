@@ -15,25 +15,35 @@ node(V) :- loop(_,V,_).
 % Chain nodes for the root path of length A>1: p(U,V,A,1..A-1)
 latent(p(U,V,A,K)) :- root(U,V,A), A > 1, K = 1..A-1.
 
-% ---------- Bundle selection ----------
-% If A>1, bundle is first chain node p(U,V,A,1) (unchanged).
-bundle(U,V,p(U,V,A,1)) :- root(U,V,A), A > 1.
+% --- Back-compat adapter for unscoped loops loop(U,V,D) -> loop(U,V,A,D) ---
 
-% If A=1 and there is ANY loop on (U,V), create a dedicated bundle b(U,V)
+% Is there any root with A > 1?
+has_root_gt1(U,V) :- root(U,V,A), A > 1.
+
+% Pick the smallest A > 1 (so periodic trees like (2,<2>) bind to A=2)
+amin_gt1(U,V,Am) :- has_root_gt1(U,V), Am = #min { A : root(U,V,A), A > 1 }.
+
+% Map legacy loops to that A; otherwise fall back to A=1.
+loop(U,V,Am,D) :- loop(U,V,D), amin_gt1(U,V,Am).
+loop(U,V,1,D)  :- loop(U,V,D), not has_root_gt1(U,V).
+
+% ---------- Bundle selection (per-root version) ----------
+% If A>1, bundle is first chain node p(U,V,A,1)
+bundle(U,V,A,p(U,V,A,1)) :- root(U,V,A), A > 1.
+
+% If A=1 and there is a loop at exactly that A, create a dedicated bundle b(U,V)
 % so loops don't land on V itself.
-% Only treat loops as belonging to the *directed* edge when the pair is not bidirected.
-has_loop_pair(U,V) :- loop(U,V,_), not bi_edge(U,V).
-bundle(U,V,b(U,V)) :- root(U,V,1), has_loop_pair(U,V).
+has_loop_pair(U,V,A) :- root(U,V,A), loop(U,V,A), not bi_edge(U,V).
+bundle(U,V,A,b(U,V)) :- root(U,V,A), has_loop_pair(U,V,A), A = 1.
 
-% If A=1 and there are NO loops:
-%   - for non-bidirected pairs, we can use V directly (original behavior)
-%   - for bidirected pairs, we never bind to the observed node V (avoid bundle(8,9,9))
-bundle(U,V,V) :- root(U,V,1), not has_loop_pair(U,V), not bi_edge(U,V).
-bundle(U,V,b(U,V)) :- root(U,V,1), not has_loop_pair(U,V), bi_edge(U,V).
+% If A=1 and there are NO loops
+bundle(U,V,A,V) :- root(U,V,A), A = 1,
+    not has_loop_pair(U,V,A), not bi_edge(U,V).
+bundle(U,V,A,b(U,V)) :- root(U,V,A), A = 1,
+    not has_loop_pair(U,V,A), bi_edge(U,V).
 
-% Declare the latent bundle node only when used.
-latent(b(U,V)) :- bundle(U,V,b(U,V)).
-
+% Declare the latent bundle node only when used
+latent(b(U,V)) :- bundle(U,V,_,b(U,V)).
 
 % ---------- Build the root path U -> ... -> V ----------
 % helper: mark (U,V) as synthetic-only if there is a bidirected edge
@@ -46,12 +56,11 @@ synthetic_bidir_only(U,V) :-
 % A = 1: keep the direct edge unless it's only a synthetic bidirected mirror
 dir_unique(U,V,1) :-
     root(U,V,1),
-    not has_loop_pair(U,V),
+    not has_loop_pair(U,V,1),
     not synthetic_bidir_only(U,V).
 
-% A = 1: if there ARE loops, route via the bundle b(U,V)
-dir_unique(U,b(U,V),1)  :- root(U,V,1), has_loop_pair(U,V).
-dir_unique(b(U,V),V,1)  :- root(U,V,1), has_loop_pair(U,V).
+dir_unique(U,b(U,V),1)  :- root(U,V,1), has_loop_pair(U,V,1).
+dir_unique(b(U,V),V,1)  :- root(U,V,1), has_loop_pair(U,V,1).
 
 % A > 1: chain U -> p(...,1) -> ... -> p(...,A-1) -> V
 dir_unique(U,p(U,V,A,1),1)            :- root(U,V,A), A > 1.
@@ -61,30 +70,21 @@ dir_unique(p(U,V,A,A-1),V,1)          :- root(U,V,A), A > 1.
 % For the cycle backbone we use positions 1..M-1 as new latent nodes;
 % position 0 is the bundle X itself.
 % M is the largest loop length among siblings for (U,V).
-mmax(U,V,M) :- root(U,V,_), M = #max { D : loop(U,V,D) }.
+% Compute M per specific root(A)
+mmax(U,V,A,M) :- root(U,V,A), M = #max { D : loop(U,V,A,D) }.
 
-% Backbone latent cycle nodes for M>1: cyc(U,V,1..M-1)
-cycpos(U,V,K) :- mmax(U,V,M), M > 1, K = 1..M-1.
-latent(cyc(U,V,K)) :- cycpos(U,V,K).
+% Backbone latent cycle nodes for each A
+cycpos(U,V,A,K) :- mmax(U,V,A,M), M > 1, K = 1..M-1.
+latent(cyc(U,V,A,K)) :- cycpos(U,V,A,K).
 
-% ================================================================
-% Build the bundled cycles for siblings (leaf-level minimality)
-% ================================================================
-% Let X be the bundle node for (U,V).
-% Build the longest cycle of length M using only M-1 new nodes cyc(...,1..M-1)
-% and re-use that backbone for all shorter loop lengths.
+% Close the length-M cycle for that A
+dir_unique(X,cyc(U,V,A,1),1)                :- mmax(U,V,A,M), M > 1, bundle(U,V,A,X).
+dir_unique(cyc(U,V,A,K),cyc(U,V,A,K+1),1)   :- mmax(U,V,A,M), M > 2, K = 1..M-2.
+dir_unique(cyc(U,V,A,M-1),X,1)              :- mmax(U,V,A,M), M > 1, bundle(U,V,A,X).
 
-% Close the length-M cycle:
-% X -> cyc1 -> cyc2 -> ... -> cyc(M-1) -> X
-dir_unique(X,cyc(U,V,1),1)                :- mmax(U,V,M), M > 1, bundle(U,V,X).
-dir_unique(cyc(U,V,K),cyc(U,V,K+1),1)     :- mmax(U,V,M), M > 2, K = 1..M-2.
-dir_unique(cyc(U,V,M-1),X,1)              :- mmax(U,V,M), M > 1, bundle(U,V,X).
-
-% For each loop length D:
-% - if D = 1  → add a self-loop on X
-% - if D > 1  → add a "chord" from cyc(D-1) back to X
-dir_unique(X,X,1)                         :- loop(U,V,1), bundle(U,V,X).
-dir_unique(cyc(U,V,D-1),X,1)              :- loop(U,V,D), D > 1, bundle(U,V,X).
+% For each loop length D tied to that A
+dir_unique(X,X,1)                           :- loop(U,V,A,1), bundle(U,V,A,X).
+dir_unique(cyc(U,V,A,D-1),X,1)              :- loop(U,V,A,D), D > 1, bundle(U,V,A,X).
 
 % ================================================================
 % Expand bidirected lag sets using baseline distance (from hide_nodes)
@@ -144,7 +144,8 @@ dir_unique(h0(U,V),V,1) :-
 % --- attach any loops from (U,V) onto its zero-diff parent h0(U,V)
 %   D = 1  → self-loop on the parent
 %   D > 1  → chord from cyc(D-1) back to the parent through shared backbone
-
+% --- Adapter: expose per-root loops to bidirected builders ---
+loop(U,V,D) :- loop(U,V,A,D).
 % Largest loop length among these siblings
 mmax_bi(U,V,M) :- bi_edge(U,V), U < V, bi_zero(U,V), M = #max { D : loop(U,V,D) }.
 

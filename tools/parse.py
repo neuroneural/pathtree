@@ -275,20 +275,6 @@ def parse_clingo_output(stdout: str):
                 # we don't actually use bi_unique payloads in set-graph building
                 u, v, _, _ = parts
                 bidirected_pairs.add((norm(u), norm(v)))
-            # elif atom.startswith("base_min_final("):
-            #     inner = atom[len("base_min_final("):-1]
-            #     x, y, dmin = smart_split_args(inner)
-            #     key = (norm(x), norm(y))
-            #     val = int(dmin)
-            #     prev = d_child.get(key)
-            #     if prev is None or val < prev:
-            #         d_child[key] = val
-
-
-
-
-            # ignore out_node/observed/latent/hidden for graph build
-            # but you could debug-log them if needed
 
     return directed, directed_pairs, bidirected_pairs, bidirected_zero, bidirected_diff
 
@@ -310,12 +296,10 @@ def dump_for_clingo(graph, observed, base_min=None, return_str=False, filename=N
         for v, ed in nbrs.items():
             for et, raw in ed.items():
 
-                # ===============================
                 # Bidirected edges
-                # ===============================
                 if et == 2:
                     # canonicalize orientation so we only emit once
-                    uu, vv = (u, v) if str(u) < str(v) else (v, u)
+                    uu, vv = u, v
                     facts.append(f"bi_edge({uu},{vv}).")
                     if isinstance(raw, PathTree) and raw.loopset:
                         for child in raw.loopset:
@@ -378,55 +362,70 @@ def dump_for_clingo(graph, observed, base_min=None, return_str=False, filename=N
 
                     continue  # done with this edge
 
-                # Directed edges
+                # Directed edges (PathTree / PathForest)
                 if et != 1:
                     continue
 
-                # PathTree case
-                if isinstance(raw, PathTree):
-                    preset = raw.preset
-                    if isinstance(preset, set) and len(preset) == 1:
-                        preset = next(iter(preset))
-                    elif isinstance(preset, set):
-                        raise ValueError(f"Unsupported multi-base preset: {preset}")
+                # Case 1: PathForest (list of PathTrees)
+                if isinstance(raw, list):
+                    # Group PathTrees that share the same parent edge (u,v)
+                    print(f"[DEBUG PathForest check] Edge ({u}->{v}) has {len(raw)} PathTrees:")
+                    for pt in raw:
+                        if isinstance(pt, PathTree):
+                            # Extract numeric preset
+                            print(f"   preset={pt.preset}, loopset={pt.loopset}")
+                            if isinstance(pt.preset, set):
+                                if len(pt.preset) != 1:
+                                    raise ValueError(f"Multi-base preset not supported: {pt.preset}")
+                                preset_val = next(iter(pt.preset))
+                            else:
+                                preset_val = pt.preset
 
-                    facts.append(f"root({u},{v},{preset}).")
+                            # Emit root fact
+                            facts.append(f"root({u},{v},{int(preset_val)}).")
 
-                    # Emit loops (flat children only for now)
-                    for child in raw.loopset:
-                        if isinstance(child, int):
-                            facts.append(f"loop({u},{v},{child}).")
-                        elif isinstance(child, PathTree):
-                            sub_str = dump_for_clingo(
-                                {u: {v: {1: child}}},
-                                observed,
-                                return_str=True
-                            )
-                            facts.extend(sub_str.strip().splitlines())
+                            # Emit each loop fact from loopset
+                            for loop in sorted(pt.loopset):
+                                if isinstance(loop, int):
+                                    facts.append(f"loop({u},{v},{loop}).")
+                                elif isinstance(loop, PathTree):
+                                    sub = dump_for_clingo({u: {v: {1: loop}}}, observed, return_str=True)
+                                    facts.extend(sub.strip().splitlines())
+                                else:
+                                    raise TypeError(f"Unsupported loopset element {loop!r}")
+                        elif isinstance(pt, int):
+                            # numeric lag
+                            facts.append(f"dir_unique({u},{v},{pt}).")
                         else:
-                            raise TypeError(f"Unsupported loopset element: {child}")
+                            raise TypeError(f"Unsupported element in list for directed edge ({u},{v}): {type(pt)}")
 
-                # finite lag set
+                # Case 2: Single PathTree
+                elif isinstance(raw, PathTree):
+                    if isinstance(raw.preset, set):
+                        if len(raw.preset) != 1:
+                            raise ValueError(f"Multi-base preset not supported: {raw.preset}")
+                        preset_val = next(iter(raw.preset))
+                    else:
+                        preset_val = raw.preset
+                    facts.append(f"root({u},{v},{int(preset_val)}).")
+
+                    for loop in sorted(raw.loopset):
+                        if isinstance(loop, int):
+                            facts.append(f"loop({u},{v},{loop}).")
+                        elif isinstance(loop, PathTree):
+                            sub = dump_for_clingo({u: {v: {1: loop}}}, observed, return_str=True)
+                            facts.extend(sub.strip().splitlines())
+                        else:
+                            raise TypeError(f"Unsupported loopset element {loop!r}")
+
+                # Case 3: Finite lag set
                 elif isinstance(raw, set):
                     for L in sorted(raw):
                         facts.append(f"dir_unique({u},{v},{L}).")
 
-                # list of PathTrees or ints
-                elif isinstance(raw, list):
-                    for elt in raw:
-                        if isinstance(elt, PathTree):
-                            sub_str = dump_for_clingo(
-                                {u: {v: {1: elt}}},
-                                observed,
-                                return_str=True
-                            )
-                            facts.extend(sub_str.strip().splitlines())
-                        elif isinstance(elt, int):
-                            facts.append(f"dir_unique({u},{v},{elt}).")
-                        else:
-                            raise TypeError(f"Unsupported elt in list: {elt}")
                 else:
-                    raise TypeError(f"Unsupported edge payload: {raw}")
+                    raise TypeError(f"Unsupported directed payload for edge ({u},{v}): {type(raw)}")
+
     if base_min:
         for (u, v), dmin in base_min.items():
             facts.append(f"base_min_final({u},{v},{dmin}).")

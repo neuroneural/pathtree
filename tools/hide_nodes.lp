@@ -1,14 +1,12 @@
 % Graph marginalization with lags
-% ================================
+
 #const maxlag=1000.
 lag(0..maxlag).
 % ----- BASIC SANITY (optional) ---
 :- observed(X), hidden(X).
 :- node(X), not observed(X), not hidden(X).
 
-% ---------------------------------
 % Paths whose intermediate nodes are hidden
-% ---------------------------------
 path_h(Z,Y,1) :-
   hidden(Z), observed(Y), edge(Z,Y).
 path_h(Z,Y,L) :-
@@ -22,14 +20,12 @@ pathvv(X,Y,L) :-
   lag(L), L>1,
   observed(X), edge(X,Z), hidden(Z),
   path_h(Z,Y,L-1).
-% ---------------------------------
+
 % Directed edges in G' and lag set
-% ---------------------------------
 dir_edge(X,Y) :-
   pathvv(X,Y,_).
 dir_lag(X,Y,L) :-
   pathvv(X,Y,L).
-
 
 % Base_h: loop-free hidden→observed distance counting each edge exactly once
 base_h(H,Y,1) :-
@@ -96,45 +92,29 @@ has_loop(H) :- loop_len(H,_).
 % Bidirected edges (common hidden ancestor)
 % ---------------------------------
 bi_lag(X,Y,Lx,Ly) :-
-  observed(X), observed(Y), X<Y,
+  observed(X), observed(Y), X != Y,
   hidden(H),
   path_h(H,X,Lx),
-  path_h(H,Y,Ly).
+  path_h(H,Y,Ly),
+  Lx <= Ly.
 
 bi_edge(X,Y) :- bi_lag(X,Y,_,_).
 
 % absolute difference form
 bi_diff(X,Y,D) :-
-  observed(X), observed(Y), X<Y,
+  observed(X), observed(Y), X != Y,
   hidden(H),
   base_h(H,X,Lx0), base_h(H,Y,Ly0),
   Ly0 >= Lx0, D = Ly0 - Lx0.
 
-bi_diff(X,Y,D) :-
-  observed(X), observed(Y), X<Y,
-  hidden(H),
-  base_h(H,X,Lx0), base_h(H,Y,Ly0),
-  Lx0 > Ly0,  D = Lx0 - Ly0.
-
 bi_diff(X,Y,D2) :-
-  observed(X), observed(Y), X<Y,
+  observed(X), observed(Y), X != Y,
   looped_ancestor(H0,X,Lx0),
   looped_ancestor(H0,Y,Ly0),
   has_loop(H0), loop_len(H0,Lloop), lag(Lloop),
   lag(K), K>0,
   Lx0 <= Ly0,
   D0 = Ly0 - Lx0,
-  D2 = D0 + K * Lloop,
-  D2 <= maxlag, lag(D2).
-
-bi_diff(X,Y,D2) :-
-  observed(X), observed(Y), X<Y,
-  looped_ancestor(H0,X,Lx0),
-  looped_ancestor(H0,Y,Ly0),
-  has_loop(H0), loop_len(H0,Lloop), lag(Lloop),
-  lag(K), K>0,
-  Lx0 > Ly0,
-  D0 = Lx0 - Ly0,
   D2 = D0 + K * Lloop,
   D2 <= maxlag, lag(D2).
 

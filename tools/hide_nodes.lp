@@ -49,7 +49,6 @@ path_h(H1,Y,L) :-
     L = L2 + 1,
     lag(L).
 
-% ---------------------------------
 % Find the first looped hidden ancestor (source of periodicity)
 % ---------------------------------
 % Case 1: the hidden node itself has a loop
@@ -88,7 +87,6 @@ loop_len(H,L) :-
 
 has_loop(H) :- loop_len(H,_).
 
-% ---------------------------------
 % Bidirected edges (common hidden ancestor)
 % ---------------------------------
 bi_lag(X,Y,Lx,Ly) :-
@@ -122,6 +120,94 @@ bi_zero(X,Y)   :- bi_diff(X,Y,0).
 
 dir_unique(X,Y,L) :- dir_lag(X,Y,L).
 bi_unique(X,Y,Lx,Ly) :- bi_lag(X,Y,Lx,Ly).
+
+% ================================
+% Bi-directed self-loops (A <-> A)
+% ================================
+
+% --- Helpers: observed -> hidden distances (mirror of base_h/path_h) ---
+base_vh(X,H,1) :-
+  observed(X), hidden(H), edge(X,H).
+
+% one observed->hidden step then purely hidden steps to H
+base_vh(X,H,L) :-
+  lag(L), L>1,
+  observed(X), edge(X,Z), hidden(Z),
+  path_hidden(Z,H,L2),
+  L = L2 + 1.
+
+% observed->hidden paths that can profit from loops upstream
+path_vh(X,H,L) :- base_vh(X,H,L).
+path_vh(X,H,L) :-
+  base_vh(X,H0,L0),
+  H = H0,
+  loop_len(H0,Lloop),
+  lag(K), K>0,
+  L = L0 + K * Lloop, lag(L).
+
+% -------------------------------
+% CASE 1: R -> A on both ends
+% -------------------------------
+% differences of two (possibly loop-augmented) R->A paths
+
+% base differences without loops
+bi_self_base(A,D0) :-
+  observed(A),
+  hidden(R),
+  base_h(R,A,Lx), base_h(R,A,Ly),
+  Ly >= Lx,
+  D0 = Ly - Lx.
+
+% close under multiples of R's loop length
+bi_self_diff(A,D) :-
+  bi_self_base(A,D0),
+  hidden(R), has_loop(R), loop_len(R,Lloop),
+  lag(N), N >= 0,
+  D = D0 + N * Lloop, lag(D).
+
+% if R has no loop, we still keep the D0
+bi_self_diff(A,D0) :-
+  bi_self_base(A,D0),
+  hidden(R), no_loop(R).
+
+% mark the presence of a bidirected self-loop if any D exists
+bi_self_edge(A) :- bi_self_diff(A,_).
+
+% -------------------------------
+% CASE 2 (optional): A <-> R on one end, R -> A on the other
+% -------------------------------
+% Provide this fact in input if the compressed pre-marginal graph had it:
+%    bi_obs_hidden(A,R).
+%
+% Then the induced self-bidir lags include differences between (A<->R) and (R->A),
+% also closed under R's loop multiples, with the usual no-collider restriction
+% (we never allow A<->R on both sides).
+
+bi_self_mixed(A,D) :-
+  observed(A), hidden(R),
+  bi_obs_hidden(A,R),           % input fact if applicable
+  base_h(R,A,Lra),
+  D = abs(Lra - 0),             % treat A<->R as contributing '0' base distance to A
+  lag(D).
+
+bi_self_mixed(A,D2) :-
+  observed(A), hidden(R),
+  bi_obs_hidden(A,R),
+  base_h(R,A,Lra),
+  has_loop(R), loop_len(R,Lloop),
+  lag(K), K>0,
+  D2 = abs(Lra - K * Lloop),
+  lag(D2).
+
+% union of both sources
+bi_self_all(A,D) :- bi_self_diff(A,D).
+bi_self_all(A,D) :- bi_self_mixed(A,D).
+
+% expose as "bi_unique" using X=Y arity-3 form (store as (A,A,D))
+bi_unique(A,A,D,D) :- bi_self_all(A,D).
+bi_diff(A,A,D) :- bi_unique(A,A,D,D).
+% convenient boolean:
+bi_edge(A,A) :- bi_unique(A,A,_,_).
 
 % forbid spurious unit-lag between observed nodes without a direct edge
 :- dir_unique(X,Y,1), observed(X), observed(Y), not edge(X,Y).

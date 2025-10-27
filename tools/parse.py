@@ -211,7 +211,6 @@ def smart_split_args(s: str):
         parts.append(buf.strip())
     return parts
 
-
 def parse_clingo_output(stdout: str):
     """
     Parse clingo stdout into directed/bidirected structures.
@@ -296,71 +295,51 @@ def dump_for_clingo(graph, observed, base_min=None, return_str=False, filename=N
         for v, ed in nbrs.items():
             for et, raw in ed.items():
 
-                # Bidirected edges
                 if et == 2:
-                    # canonicalize orientation so we only emit once
                     uu, vv = u, v
-                    facts.append(f"bi_edge({uu},{vv}).")
-                    if isinstance(raw, PathTree) and raw.loopset:
-                        for child in raw.loopset:
-                            if isinstance(child, int):
-                                facts.append(f"loop({uu},{vv},{child}).")
-                            elif isinstance(child, PathTree):
-                                subpreset = next(iter(child.preset)) if isinstance(child.preset, set) else child.preset
-                                facts.append(f"loop({uu},{vv},{subpreset}).")
-                    if isinstance(raw, set):
-                        for d in sorted(raw):
-                            if int(d) == 0:
-                                facts.append(f"bi_zero({uu},{vv}).")
-                            else:
-                                facts.append(f"bi_diff({uu},{vv},{int(d)}).")
 
+                    # Collect all lags in this bidirected edge (whatever its type)
+                    lags = set()
+                    if isinstance(raw, set):
+                        lags |= raw
+                    elif isinstance(raw, PathTree):
+                        if isinstance(raw.preset, set):
+                            lags |= raw.preset
+                        elif isinstance(raw.preset, int):
+                            lags.add(raw.preset)
                     elif isinstance(raw, list):
                         for elt in raw:
-                            # plain int
                             if isinstance(elt, int):
-                                if elt == 0:
-                                    facts.append(f"bi_zero({uu},{vv}).")
-                                else:
-                                    facts.append(f"bi_diff({uu},{vv},{elt}).")
-
-                            # PathTree with a numeric preset
+                                lags.add(elt)
+                            elif isinstance(elt, tuple):
+                                lags.update(elt)
                             elif isinstance(elt, PathTree):
-                                preset = elt.preset
-                                if isinstance(preset, set) and len(preset) == 1:
-                                    preset = next(iter(preset))
-                                if isinstance(preset, int):
-                                    if preset == 0:
-                                        facts.append(f"bi_zero({uu},{vv}).")
-                                    else:
-                                        facts.append(f"bi_diff({uu},{vv},{preset}).")
-                                else:
-                                    raise TypeError(f"Unsupported PathTree preset in bidirected: {preset}")
+                                if isinstance(elt.preset, set):
+                                    lags |= elt.preset
+                                elif isinstance(elt.preset, int):
+                                    lags.add(elt.preset)
 
-                            # tuple of ints
-                            elif isinstance(elt, tuple) and all(isinstance(x, int) for x in elt):
-                                for val in elt:
-                                    if val == 0:
-                                        facts.append(f"bi_zero({uu},{vv}).")
-                                    else:
-                                        facts.append(f"bi_diff({uu},{vv},{val}).")
+                    has_zero = 0 in lags
 
-                            else:
-                                raise TypeError(f"Unsupported bidirected element in list: {elt}")
+                    # Emit bi_edge facts:
+                    # - Always emit u→v
+                    # - Only emit v→u if zero exists in lag set (instantaneous)
+                    facts.append(f"bi_edge({uu},{vv}).")
+                    if uu != vv and has_zero:
+                        facts.append(f"bi_edge({vv},{uu}).")
 
-                    elif isinstance(raw, PathTree):
-                        preset = raw.preset
-                        if isinstance(preset, set) and len(preset) == 1:
-                            preset = next(iter(preset))
-                        if isinstance(preset, int):
-                            if preset == 0:
-                                facts.append(f"bi_zero({uu},{vv}).")
-                            else:
-                                facts.append(f"bi_diff({uu},{vv},{preset}).")
-                    else:
-                        raise TypeError(f"Unsupported bidirected payload: {raw}")
+                    # Emit per-lag facts:
+                    # - Mirror only zeros
+                    for d in sorted(lags):
+                        if d == 0:
+                            facts.append(f"bi_zero({uu},{vv}).")
+                            if uu != vv:
+                                facts.append(f"bi_zero({vv},{uu}).")
+                        else:
+                            facts.append(f"bi_diff({uu},{vv},{d}).")
 
                     continue  # done with this edge
+
 
                 # Directed edges (PathTree / PathForest)
                 if et != 1:

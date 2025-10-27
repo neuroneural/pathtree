@@ -204,10 +204,18 @@ bi_self_all(A,D) :- bi_self_diff(A,D).
 bi_self_all(A,D) :- bi_self_mixed(A,D).
 
 % expose as "bi_unique" using X=Y arity-3 form (store as (A,A,D))
-bi_unique(A,A,D,D) :- bi_self_all(A,D).
-bi_diff(A,A,D) :- bi_unique(A,A,D,D).
-% convenient boolean:
-bi_edge(A,A) :- bi_unique(A,A,_,_).
+% emit only if there exists at least one nonzero lag
+bi_unique(A,A,D,D) :-
+    bi_self_all(A,D),
+    D != 0.
+
+bi_diff(A,A,D) :-
+    bi_unique(A,A,D,D).
+
+% convenient boolean: only true if a nonzero lag exists
+bi_edge(A,A) :-
+    bi_unique(A,A,_,_).
+
 
 % forbid spurious unit-lag between observed nodes without a direct edge
 :- dir_unique(X,Y,1), observed(X), observed(Y), not edge(X,Y).

@@ -132,8 +132,8 @@ def export_to_facts(G_true, hidden):
             # emit bidirected edges (etype=2)
             if 2 in ed:
                 diffs = ed[2]
-                # only export if both ends are observed and lag set is not just {0}
-                if u not in hidden and v not in hidden and not (len(diffs) == 1 and 0 in diffs):
+                # export all observed–observed bidirected edges unless it is a pure self-loop {0}
+                if u not in hidden and v not in hidden and not (u == v and len(diffs) == 1 and 0 in diffs):
                     fact = f"bi_edge({emit_node(u)},{emit_node(v)})."
                     facts.append(fact)
                     print(f"[export_to_facts] EMIT {fact} ed={ed}")
@@ -318,6 +318,17 @@ def dump_for_clingo(graph, observed, base_min=None, return_str=False, filename=N
                                     lags |= elt.preset
                                 elif isinstance(elt.preset, int):
                                     lags.add(elt.preset)
+                    # emit loop() facts for bidirected self-loop PathTrees ---
+                    if isinstance(raw, PathTree):
+                        for loop in sorted(raw.loopset):
+                            if isinstance(loop, int):
+                                facts.append(f"loop({uu},{vv},{loop}).")
+                    elif isinstance(raw, list):
+                        for elt in raw:
+                            if isinstance(elt, PathTree):
+                                for loop in sorted(elt.loopset):
+                                    if isinstance(loop, int):
+                                        facts.append(f"loop({uu},{vv},{loop}).")
 
                     has_zero = 0 in lags
 

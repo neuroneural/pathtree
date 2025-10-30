@@ -31,9 +31,8 @@ loop(U,V,1,D)  :- loop(U,V,D), not has_root_gt1(U,V).
 % If A>1, bundle is first chain node p(U,V,A,1)
 bundle(U,V,A,p(U,V,A,1)) :- root(U,V,A), A > 1.
 
-% If A=1 and there is a loop at exactly that A, create a dedicated bundle b(U,V)
-% so loops don't land on V itself.
-has_loop_pair(U,V,A) :- root(U,V,A), loop(U,V,A), not bi_edge(U,V).
+% Only create a bundle if THIS root itself has a loop
+has_loop_pair(U,V,A) :- root(U,V,A), loop(U,V,A).
 bundle(U,V,A,b(U,V)) :- root(U,V,A), has_loop_pair(U,V,A), A = 1.
 
 % If A=1 and there are NO loops
@@ -58,6 +57,11 @@ dir_unique(U,V,1) :-
     root(U,V,1),
     not has_loop_pair(U,V,1),
     not synthetic_bidir_only(U,V).
+    
+% Allow A=1 looped roots to keep direct edge if an A>1 sibling exists
+dir_unique(U,V,1) :-
+    root(U,V,1), has_loop_pair(U,V,1),
+    has_root_gt1(U,V).
 
 dir_unique(U,b(U,V),1)  :- root(U,V,1), has_loop_pair(U,V,1).
 dir_unique(b(U,V),V,1)  :- root(U,V,1), has_loop_pair(U,V,1).

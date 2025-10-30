@@ -98,27 +98,26 @@ bi_lag(X,Y,Lx,Ly) :-
 
 bi_edge(X,Y) :- bi_lag(X,Y,_,_).
 
-% absolute difference form
 bi_diff(X,Y,D) :-
-  observed(X), observed(Y), X != Y,
+  observed(X), observed(Y),
   hidden(H),
   base_h(H,X,Lx0), base_h(H,Y,Ly0),
-  Ly0 >= Lx0, D = Ly0 - Lx0.
+  X != Y, Ly0 >= Lx0, D = Ly0 - Lx0.
 
 bi_diff(X,Y,D2) :-
-  observed(X), observed(Y), X != Y,
+  observed(X), observed(Y),
   looped_ancestor(H0,X,Lx0),
   looped_ancestor(H0,Y,Ly0),
   has_loop(H0), loop_len(H0,Lloop), lag(Lloop),
   lag(K), K>0,
-  Lx0 <= Ly0,
+  X != Y, Lx0 <= Ly0,
   D0 = Ly0 - Lx0,
   D2 = D0 + K * Lloop,
   D2 <= maxlag, lag(D2).
 
 bi_zero(X,Y)   :- bi_diff(X,Y,0).
 
-dir_unique(X,Y,L) :- dir_lag(X,Y,L).
+dir_unique(X,Y,L) :- dir_lag(X,Y,L), not bi_diff(X,Y,_).
 bi_unique(X,Y,Lx,Ly) :- bi_lag(X,Y,Lx,Ly).
 
 % ================================

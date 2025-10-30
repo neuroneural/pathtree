@@ -397,7 +397,20 @@ def dump_for_clingo(graph, observed, base_min=None, return_str=False, filename=N
                         preset_val = next(iter(raw.preset))
                     else:
                         preset_val = raw.preset
+
+                    # special case: preset=1 with loopset={1} encodes dual path
+                    if preset_val == 1 and set(raw.loopset) == {1}:
+                        # normal direct edge
+                        facts.append(f"root({u},{v},1).")
+                        # synthetic delayed path
+                        facts.append(f"root({u},{v},2).")
+                        # loop belongs to the delayed branch (A=2), not A=1
+                        facts.append(f"loop({u},{v},1).")
+                        continue
+
+                    # --- normal single-root case ---
                     facts.append(f"root({u},{v},{int(preset_val)}).")
+
 
                     for loop in sorted(raw.loopset):
                         if isinstance(loop, int):
@@ -430,11 +443,10 @@ def dump_for_clingo(graph, observed, base_min=None, return_str=False, filename=N
             f.write(out)
     return None
 
+
 def build_set_graph(directed, directed_pairs, bidirected_pairs, bidirected_zero,
                     bidirected_diff, maxlag=17):
     G = {}
-    sinks = set()
-
     def norm(x):
         try:
             return int(x)
@@ -444,20 +456,21 @@ def build_set_graph(directed, directed_pairs, bidirected_pairs, bidirected_zero,
     # dir_unique(u,v,L)
     for (u, v), lags in directed.items():
         u, v = norm(u), norm(v)
-        sinks.add(v)
+
+        # skip redundant directed self-loops that already belong to a bidirected pair
+        if u == v and (u, v) in bidirected_pairs:
+            print(f"[DEBUG build] skip self-loop dir_unique {u}->{v} (belongs to bidirected)")
+            continue
         expanded = set()
         for L in lags:
-            # if u == v and L > 1:
-            #     expanded.update({k * L for k in range(1, maxlag // L + 1)})
-            # else:
             expanded.add(L)
         G.setdefault(u, {}).setdefault(v, {})[1] = expanded
         print(f"[DEBUG build] dir_unique made directed {u}->{v} lags={sorted(expanded)}")
 
+
     # raw unit edges edge(u,v)
     for (u, v) in directed_pairs:
         u, v = norm(u), norm(v)
-        sinks.add(v)
         # only add lag=1 if this pair has *no explicit dir_unique entry*
         if (u, v) not in directed:
             if u != v:
@@ -468,8 +481,6 @@ def build_set_graph(directed, directed_pairs, bidirected_pairs, bidirected_zero,
         else:
             print(f"[DEBUG build] skipped redundant edge/2 for {u}->{v}")
 
-
-
     # bidirected edges
     for (u, v) in bidirected_pairs:
         u, v = norm(u), norm(v)
@@ -478,9 +489,6 @@ def build_set_graph(directed, directed_pairs, bidirected_pairs, bidirected_zero,
             diffs |= bidirected_diff[(u, v)]
         if (u, v) in bidirected_zero or (v, u) in bidirected_zero:
             diffs.add(0)
-        # if d_child and (u, v) in d_child:
-        #     base_dist = d_child[(u, v)]
-        #     diffs = {d for d in diffs if d <= maxlag - base_dist}
 
         print(f"[DEBUG build_set_graph] Pair {(u,v)} raw diffs={diffs}")
         if not diffs:

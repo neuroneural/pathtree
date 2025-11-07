@@ -33,7 +33,10 @@ bundle(U,V,A,p(U,V,A,1)) :- root(U,V,A), A > 1.
 
 % Only create a bundle if THIS root itself has a loop
 has_loop_pair(U,V,A) :- root(U,V,A), loop(U,V,A).
-bundle(U,V,A,b(U,V)) :- root(U,V,A), has_loop_pair(U,V,A), A = 1.
+bundle(U,V,A,b(U,V)) :-
+    root(U,V,A), has_loop_pair(U,V,A), A = 1,
+    not bi_edge(U,V).     % <-- new guard: skip if bidirected
+
 
 % If A=1 and there are NO loops
 bundle(U,V,A,V) :- root(U,V,A), A = 1,
@@ -86,9 +89,15 @@ dir_unique(X,cyc(U,V,A,1),1)                :- mmax(U,V,A,M), M > 1, bundle(U,V,
 dir_unique(cyc(U,V,A,K),cyc(U,V,A,K+1),1)   :- mmax(U,V,A,M), M > 2, K = 1..M-2.
 dir_unique(cyc(U,V,A,M-1),X,1)              :- mmax(U,V,A,M), M > 1, bundle(U,V,A,X).
 
-% For each loop length D tied to that A
-dir_unique(X,X,1)                           :- loop(U,V,A,1), bundle(U,V,A,X).
-dir_unique(cyc(U,V,A,D-1),X,1)              :- loop(U,V,A,D), D > 1, bundle(U,V,A,X).
+% D=1 means a true 1-cycle on the bundle for this root(A)
+% This is needed so a PathTree like (A,<1>) actually becomes a loop source.
+dir_unique(X,X,1) :-
+    loop(U,V,A,1),
+    bundle(U,V,A,X).
+
+dir_unique(cyc(U,V,A,D-1),X,1) :-
+    loop(U,V,A,D), D > 1,
+    bundle(U,V,A,X).
 
 % ================================================================
 % Expand bidirected lag sets using baseline distance (from hide_nodes)
@@ -188,26 +197,34 @@ dir_unique(pu(h(U,V,D),V,L,L-1), V, 1) :-
     vlen(U,V,L), L > 1.
 
 % ================================================================
-% Bidirected loops: attach loopset to the hidden parent(s)
+% Bidirected loops: attach loopset only to the canonical zero-diff parent
 % ================================================================
-% Collect all parents introduced for the bidirected pair:
-parent_bi(U,V,h0(U,V))      :- bi_edge(U,V), bi_zero(U,V).
-parent_bi(U,V, h(U,V,D))    :- bi_edge(U,V), bi_diff(U,V,D).
+% Only h0(U,V) participates in the backbone cycle
+% Nonzero-diff parents h(U,V,D) do NOT connect to the ring or to 8 directly
 
+% Canonical parent for the bidirected pair
+parent_zero(U,V,h0(U,V)) :- bi_edge(U,V), bi_zero(U,V).
+
+% Determine maximum loop length
 mmax_bi(U,V,M) :- bi_edge(U,V), M = #max { R : loop(U,V,R) }.
 
+% Create the backbone ring of M−1 latent nodes
 bcycpos(U,V,K) :- mmax_bi(U,V,M), M > 1, K = 1..M-1.
 latent(bcyc(U,V,K)) :- bcycpos(U,V,K).
 
-dir_unique(P, bcyc(U,V,1), 1)             :- parent_bi(U,V,P), mmax_bi(U,V,M), M > 1.
-dir_unique(bcyc(U,V,K), bcyc(U,V,K+1), 1) :- mmax_bi(U,V,M), M > 2, K = 1..M-2.
-dir_unique(bcyc(U,V,M-1), P, 1)           :- parent_bi(U,V,P), mmax_bi(U,V,M), M > 1.
+% Connect only h0 into the ring
+dir_unique(h0(U,V), bcyc(U,V,1), 1)            :- parent_zero(U,V,_), mmax_bi(U,V,M), M > 1.
+dir_unique(bcyc(U,V,K), bcyc(U,V,K+1), 1)      :- mmax_bi(U,V,M), M > 2, K = 1..M-2.
+dir_unique(bcyc(U,V,M-1), h0(U,V), 1)          :- parent_zero(U,V,_), mmax_bi(U,V,M), M > 1.
 
-dir_unique(P, P, 1)                       :- parent_bi(U,V,P), loop(U,V,1).
-dir_unique(bcyc(U,V,D-1), P, 1)           :- parent_bi(U,V,P), loop(U,V,D), D > 1.
+% True self-loop on h0 (D=1) or closure for longer loopsets (D>1)
+dir_unique(h0(U,V), h0(U,V), 1)                :- bi_edge(U,V), bi_zero(U,V), loop(U,V,1).
+dir_unique(bcyc(U,V,D-1), h0(U,V), 1)          :- bi_edge(U,V), bi_zero(U,V), loop(U,V,D), D > 1.
+
+% All other parents h(U,V,D) remain simple (no backbone connections)
+
 
 % Output node set (for visibility)
-% ================================================================
 out_node(U) :- observed(U).
 out_node(X) :- latent(X).
 out_node(U) :- node(U).

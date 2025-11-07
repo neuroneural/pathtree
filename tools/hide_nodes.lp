@@ -117,12 +117,11 @@ bi_diff(X,Y,D2) :-
 
 bi_zero(X,Y)   :- bi_diff(X,Y,0).
 
-dir_unique(X,Y,L) :- dir_lag(X,Y,L), not bi_diff(X,Y,_).
+dir_unique(X,Y,L) :- dir_lag(X,Y,L).
 bi_unique(X,Y,Lx,Ly) :- bi_lag(X,Y,Lx,Ly).
 
-% ================================
+
 % Bi-directed self-loops (A <-> A)
-% ================================
 
 % --- Helpers: observed -> hidden distances (mirror of base_h/path_h) ---
 base_vh(X,H,1) :-
@@ -157,10 +156,13 @@ bi_self_base(A,D0) :-
   Ly >= Lx,
   D0 = Ly - Lx.
 
-% close under multiples of R's loop length
+% Restrict periodicity to loops of hidden ancestors that actually reach A
 bi_self_diff(A,D) :-
   bi_self_base(A,D0),
-  hidden(R), has_loop(R), loop_len(R,Lloop),
+  hidden(R),
+  base_h(R,A,_),              % ensure R contributes to A
+  has_loop(R),
+  loop_len(R,Lloop),
   lag(N), N >= 0,
   D = D0 + N * Lloop, lag(D).
 

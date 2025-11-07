@@ -123,11 +123,22 @@ def export_to_facts(G_true, hidden):
         for v, ed in nbrs.items():
             print(f"[export_to_facts] CHECK {u}->{v} payload={ed}")
 
-            # emit directed edges (etype=1)
             if 1 in ed:
-                fact = f"edge({emit_node(u)},{emit_node(v)})."
-                facts.append(fact)
-                print(f"[export_to_facts] EMIT {fact} ed={ed}")
+                lags = ed[1]
+                if u == v and u in hidden:
+                    # hidden self-loop
+                    if 1 in lags:
+                        facts.append(f"edge({emit_node(u)},{emit_node(v)}).")
+                        print(f"[export_to_facts] EMIT edge({emit_node(u)},{emit_node(v)}). ed={ed}")
+                    for d in lags:
+                        if d > 1:
+                            facts.append(f"loop_len({emit_node(u)},{d}).")
+                            print(f"[export_to_facts] EMIT loop_len({emit_node(u)},{d}).")
+                else:
+                    # normal directed edge
+                    facts.append(f"edge({emit_node(u)},{emit_node(v)}).")
+                    print(f"[export_to_facts] EMIT edge({emit_node(u)},{emit_node(v)}). ed={ed}")
+
 
             # emit bidirected edges (etype=2)
             if 2 in ed:
@@ -274,6 +285,13 @@ def parse_clingo_output(stdout: str):
                 # we don't actually use bi_unique payloads in set-graph building
                 u, v, _, _ = parts
                 bidirected_pairs.add((norm(u), norm(v)))
+            elif atom.startswith("loop("):
+                inner = atom[len("loop("):-1]
+                u, v, d = smart_split_args(inner)
+                if u == v:  # only true self-loops matter here
+                    key = (norm(u), norm(v))
+                    directed.setdefault(key, set()).add(int(d))
+                    print(f"[DEBUG parse] captured latent self-loop {u}->{v} lag={d}")
 
     return directed, directed_pairs, bidirected_pairs, bidirected_zero, bidirected_diff
 
@@ -433,7 +451,6 @@ def dump_for_clingo(graph, observed, base_min=None, return_str=False, filename=N
         for (u, v), dmin in base_min.items():
             facts.append(f"base_min_final({u},{v},{dmin}).")
 
-
     out = "\n".join(facts) + "\n"
 
     if return_str:
@@ -459,8 +476,7 @@ def build_set_graph(directed, directed_pairs, bidirected_pairs, bidirected_zero,
 
         # skip redundant directed self-loops that already belong to a bidirected pair
         if u == v and (u, v) in bidirected_pairs:
-            print(f"[DEBUG build] skip self-loop dir_unique {u}->{v} (belongs to bidirected)")
-            continue
+            print(f"[DEBUG build] keep self-loop dir_unique {u}->{v} even though bidirected exists")
         expanded = set()
         for L in lags:
             expanded.add(L)

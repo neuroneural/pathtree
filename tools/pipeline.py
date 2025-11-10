@@ -1,10 +1,6 @@
 from copy import deepcopy
 from gunfolds.utils.graphkit import ringmore
-from pathtreetools import unify_edge_representation, find_maximal_bcliques, apply_minimal_refinement
-from copy import deepcopy
-from gunfolds.utils.graphkit import ringmore
-from pathtreetools import unify_edge_representation, find_maximal_bcliques, \
-apply_minimal_refinement, reverse
+from pathtreetools import unify_edge_representation, find_maximal_bcliques, minimal_refinement
 from parse import *
 from pprint import pprint
 VERBOSE=True
@@ -79,7 +75,7 @@ def ringmore_pipeline(trial_idx, N=10, num_extra_edges=6, hidden={6, 7, 10}, max
     print("G_for:")
     pprint(G_for)
     bcliques = find_maximal_bcliques(G_for)
-    G_refined = apply_minimal_refinement(G_for, bcliques)
+    G_refined = minimal_refinement(G_for, bcliques)
     print("\nGraph with PathForest weights (refined):")
     pprint(G_refined)
 
@@ -95,7 +91,7 @@ def ringmore_pipeline(trial_idx, N=10, num_extra_edges=6, hidden={6, 7, 10}, max
           type(bidirected_diff), type(bidirected_zero))
     print("[DEBUG] Lengths:", len(directed), len(bidirected_pairs),
           len(bidirected_diff), len(bidirected_zero))
-    print("[DEBUG] Sample bidirected_diff:", list(bidirected_diff.items())[:5])
+    print("[DEBUG] Sample bidirected_diff:", bidirected_diff[:5] if isinstance(bidirected_diff, list) else list(bidirected_diff.items())[:5])
     G_cl = build_set_graph(directed, directed_pairs, bidirected_pairs, bidirected_zero, bidirected_diff)
     print("[DEBUG pre-normalize G_cl snapshot]:")
     for u, nbrs in G_cl.items():
@@ -121,8 +117,6 @@ def ringmore_pipeline(trial_idx, N=10, num_extra_edges=6, hidden={6, 7, 10}, max
     print(f"Trial {trial_idx}: Match = {match}")
 
     return {"graph": graph, "match": match}
-
-
 
 if __name__ == "__main__":
     run_ringmore_trials(num_trials=1000, N=10, num_extra_edges=6, hidden={6, 7, 10}, maxlag=17)

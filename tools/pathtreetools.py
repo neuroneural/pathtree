@@ -1245,7 +1245,7 @@ def growtree(pt, element, ref_elements, verbose=False, maxloop=100, cutoff=100):
 
     return smallest_pt(pts)
 
-def apply_minimal_refinement(graph, bcliques, cap=5):
+def minimal_refinement(graph, bcliques, cap=5):
     for V1, V2 in bcliques:
         for v1 in V1:
             for v2 in V2:

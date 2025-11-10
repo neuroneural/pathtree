@@ -132,7 +132,6 @@ lag_expanded(U,V,D) :-
     not base_min_final(U,V,_).
 
 % Bidirected edges -> introduce a hidden parent H with unit chains
-% ================================================================
 
 % Create a zero-diff parent for every bidirected pair, independent of order
 latent(h0(U,V)) :- bi_edge(U,V), bi_zero(U,V).
@@ -176,24 +175,24 @@ dir_unique(h0(U,V), h0(U,V), 1)                :- bi_edge(U,V), bi_zero(U,V), lo
 dir_unique(bcyc(U,V,D-1), h0(U,V), 1)          :- bi_edge(U,V), bi_zero(U,V), loop(U,V,D), D > 1.
 
 % Nonzero diff: parent->U length 1, parent->V length (1 + D) via unit chain
-latent(h(U,V,D))          :- bi_edge(U,V), lag_expanded(U,V,D).
-vlen(U,V,L)               :- bi_edge(U,V), lag_expanded(U,V,D), L = D + 1.
-dir_unique(h(U,V,D),U,1)  :- bi_edge(U,V), lag_expanded(U,V,D).
+latent(h(U,V,D))          :- bi_edge(U,V), lag_expanded(U,V,D), U != V.
+vlen(U,V,L)               :- bi_edge(U,V), lag_expanded(U,V,D), L = D + 1, U != V.
+dir_unique(h(U,V,D),U,1)  :- bi_edge(U,V), lag_expanded(U,V,D), U != V.
 
 latent(pu(h(U,V,D),V,L,K)) :-
-    bi_edge(U,V), lag_expanded(U,V,D),
+    bi_edge(U,V), lag_expanded(U,V,D), U != V,
     vlen(U,V,L), L > 1, K = 1..L-1.
 
 dir_unique(h(U,V,D), pu(h(U,V,D),V,L,1), 1) :-
-    bi_edge(U,V), lag_expanded(U,V,D),
+    bi_edge(U,V), lag_expanded(U,V,D), U != V,
     vlen(U,V,L), L > 1.
 
 dir_unique(pu(h(U,V,D),V,L,K), pu(h(U,V,D),V,L,K+1), 1) :-
-    bi_edge(U,V), lag_expanded(U,V,D),
+    bi_edge(U,V), lag_expanded(U,V,D), U != V,
     vlen(U,V,L), L > 2, K = 1..L-2.
 
 dir_unique(pu(h(U,V,D),V,L,L-1), V, 1) :-
-    bi_edge(U,V), lag_expanded(U,V,D),
+    bi_edge(U,V), lag_expanded(U,V,D), U != V,
     vlen(U,V,L), L > 1.
 
 % ================================================================

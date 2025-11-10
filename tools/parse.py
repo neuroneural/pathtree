@@ -510,6 +510,10 @@ def build_set_graph(directed, directed_pairs, bidirected_pairs, bidirected_zero,
         if not diffs:
             print(f"[DEBUG build_set_graph] Skipping {(u,v)} (no lags)")
             continue
+        # keep directed and bidirected self-loops separate
+        if u == v and 0 in diffs and len(diffs) == 1:
+            print(f"[DEBUG build_set_graph] Pure zero-lag self-loop {u}<->{v} — skip bidir aggregation")
+            continue
 
         G.setdefault(u, {}).setdefault(v, {})[2] = diffs
         print(f"[DEBUG build_set_graph] Added bidirected {u}<->{v} with {sorted(diffs)}")

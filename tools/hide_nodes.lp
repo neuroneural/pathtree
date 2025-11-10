@@ -40,7 +40,7 @@ base_h(H,Y,L) :-
 % Bridge base_h results into path_h for hidden ancestors with loops
 path_h(H,Y,L) :-
     base_h(H,Y,L),
-    has_loop(H).
+    valid_loop_source(H).
 
 % Also inherit one level up: if H1->H2 and H2 has loop, propagate distance
 path_h(H1,Y,L) :-
@@ -53,7 +53,7 @@ path_h(H1,Y,L) :-
 % ---------------------------------
 % Case 1: the hidden node itself has a loop
 looped_ancestor(H0,Y,L) :-
-  hidden(H0), has_loop(H0),
+  hidden(H0), valid_loop_source(H0),
   base_h(H0,Y,L).
 % Periodic expansion from looped ancestor (adds multiples of loop distance)
 looped_ancestor(H0,Y,L) :-
@@ -79,13 +79,23 @@ path_hidden(H1,H3,L) :-
     hidden(H3),
     path_hidden(H2,H3,L2),
     L = L2 + 1.
-
+% --- treat bidirected self-loop backbones as having loop length = preset lag ---
+loop_len(H,Lx) :-
+    hidden(H),
+    H = b(U,U),
+    loop(U,U,Lx).
 % loop length: only if hidden node truly closes within hidden subgraph
 loop_len(H,L) :-
     hidden(H),
+    not is_helper_cycle(H),
     path_hidden(H,H,L).
 
 has_loop(H) :- loop_len(H,_).
+% --- ignore helper cycle nodes (cyc/bcyc) when treating loops as sources ---
+is_helper_cycle(H) :- hidden(H), H = bcyc(_,_,_).
+is_helper_cycle(H) :- hidden(H), H = cyc(_,_,_,_).
+
+valid_loop_source(H) :- has_loop(H), not is_helper_cycle(H).
 
 % Bidirected edges (common hidden ancestor)
 % ---------------------------------
@@ -160,11 +170,12 @@ bi_self_base(A,D0) :-
 bi_self_diff(A,D) :-
   bi_self_base(A,D0),
   hidden(R),
-  base_h(R,A,_),              % ensure R contributes to A
-  has_loop(R),
+  base_h(R,A,_),
+  valid_loop_source(R),
   loop_len(R,Lloop),
   lag(N), N >= 0,
   D = D0 + N * Lloop, lag(D).
+
 
 % if R has no loop, we still keep the D0
 bi_self_diff(A,D0) :-
@@ -174,9 +185,7 @@ bi_self_diff(A,D0) :-
 % mark the presence of a bidirected self-loop if any D exists
 bi_self_edge(A) :- bi_self_diff(A,_).
 
-% -------------------------------
 % CASE 2 (optional): A <-> R on one end, R -> A on the other
-% -------------------------------
 % Provide this fact in input if the compressed pre-marginal graph had it:
 %    bi_obs_hidden(A,R).
 %
@@ -229,13 +238,13 @@ no_loop(H) :- hidden(H), not has_loop(H).
 % --- D_min candidates = min(Lx, Ly) for hidden ancestors that have loops
 base_min_cand(X,Y,Lx) :-
   observed(X), observed(Y), X < Y,
-  hidden(H), has_loop(H),          % <--- already correct but now guaranteed true/false
+  hidden(H), valid_loop_source(H),
   base_h(H,X,Lx), base_h(H,Y,Ly),
   Lx <= Ly, Lx > 0, Ly > 0.
 
 base_min_cand(X,Y,Ly) :-
   observed(X), observed(Y), X < Y,
-  hidden(H), has_loop(H),
+  hidden(H), valid_loop_source(H),
   base_h(H,X,Lx), base_h(H,Y,Ly),
   Ly < Lx, Lx > 0, Ly > 0.
 

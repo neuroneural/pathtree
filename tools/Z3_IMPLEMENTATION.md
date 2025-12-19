@@ -154,20 +154,51 @@ G_reverse = reverse_z3(G_forward, maxlag=17)
 assert check_roundtrip(graph, hidden, maxlag=17)  # True
 ```
 
+## Installation
+
+```bash
+# Clone the repository
+git clone https://github.com/spikedoanz/pathtree.git
+cd pathtree
+
+# Install with uv (recommended)
+uv pip install -e ".[dev]"
+
+# Or with pip
+pip install -e ".[dev]"
+```
+
+### Optional Dependencies
+
+```bash
+# Install clingo support (optional, for comparison with ASP implementation)
+uv pip install -e ".[clingo]"
+
+# Install everything
+uv pip install -e ".[all]"
+```
+
 ## Running Tests
 
 ```bash
-# Test forward pass
-python test_z3_vs_clingo.py
+# Run all tests with pytest
+pytest
 
-# Test round-trip
-python reverse_z3.py
+# Run with verbose output
+pytest -v
+
+# Run specific test file
+pytest tools/tests/test_hide_nodes.py
+
+# Run with coverage
+pytest --cov=tools
 ```
 
 ## Dependencies
 
 - Python 3.10+
-- z3-solver (installed but not actively used—implementation is pure Python)
+- numpy>=1.24.0
+- pytest>=7.0.0 (dev)
 
 ## Comparison with Clingo Implementation
 

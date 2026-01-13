@@ -8,6 +8,8 @@ license = {text = "MIT"}
 
 dependencies = [
     "numpy>=1.24.0",
+    "sympy>=1.14.0",
+    "z3-solver>=4.15.4.0",
 ]
 
 [project.optional-dependencies]
@@ -37,7 +39,7 @@ build-backend = "hatchling.build"
 packages = ["tools"]
 
 [tool.pytest.ini_options]
-testpaths = ["tools/tests"]
+testpaths = ["tests"]
 python_files = ["test_*.py"]
 python_functions = ["test_*"]
 addopts = "-v --tb=short"

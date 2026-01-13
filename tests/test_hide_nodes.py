@@ -11,12 +11,6 @@ Tests graph marginalization with various topologies:
 - Self-bidirected edges
 """
 
-import sys
-from pathlib import Path
-
-# Add tools to path
-sys.path.insert(0, str(Path(__file__).parent.parent))
-
 from hide_nodes_z3 import hide_nodes_z3
 
 

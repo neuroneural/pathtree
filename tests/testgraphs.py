@@ -1,3 +1,18 @@
+"""
+Test graphs for pathtree testing.
+"""
+
+from pathtree import PathTree
+
+
+def fix_selfloops(g):
+    """Convert self-loops to PathTree format."""
+    for v in g:
+        if v in g[v]:
+            g[v][v] = {1: {PathTree({1})}}
+    return g
+
+
 def testcase(n):
     g1 = {1: {2: {1: {1}}, 4: {1: {1}}},
           2: {3: {1: {1}}, 7: {1: {1}}},

@@ -6,11 +6,6 @@ Tests that reverse finds latent structures satisfying:
 """
 
 import pytest
-import sys
-from pathlib import Path
-
-# Add tools to path
-sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from hide_nodes_z3 import hide_nodes_z3
 from reverse_z3 import reverse_z3, check_roundtrip

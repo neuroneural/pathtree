@@ -126,16 +126,12 @@ def export_to_facts(G_true, hidden):
             if 1 in ed:
                 lags = ed[1]
                 if u == v and u in hidden:
-                    # hidden self-loop
-                    if 1 in lags:
-                        facts.append(f"edge({emit_node(u)},{emit_node(v)}).")
-                        print(f"[export_to_facts] EMIT edge({emit_node(u)},{emit_node(v)}). ed={ed}")
-                    for d in lags:
-                        if d > 1:
-                            facts.append(f"loop_len({emit_node(u)},{d}).")
-                            print(f"[export_to_facts] EMIT loop_len({emit_node(u)},{d}).")
+                    # hidden self-loop: always encode as loop_len, including 1
+                    for d in sorted(lags):
+                        facts.append(f"loop_len({emit_node(u)},{int(d)}).")
+                        print(f"[export_to_facts] EMIT loop_len({emit_node(u)},{int(d)}).")
+                    continue  # IMPORTANT: do not also emit edge(u,u)
                 else:
-                    # normal directed edge
                     facts.append(f"edge({emit_node(u)},{emit_node(v)}).")
                     print(f"[export_to_facts] EMIT edge({emit_node(u)},{emit_node(v)}). ed={ed}")
 
@@ -157,6 +153,10 @@ def export_to_facts(G_true, hidden):
                             fact = f"bi_diff({emit_node(u)},{emit_node(v)},{d})."
                             facts.append(fact)
                             print(f"[export_to_facts] EMIT {fact}")
+                            # NEW: mark this as an input bidirected lag
+                            input_fact = f"input_bi_diff({emit_node(u)},{emit_node(v)},{d})."
+                            facts.append(input_fact)
+                            print(f"[export_to_facts] EMIT {input_fact} (input provenance)")
                     if diffs:
                         Dmin = min(diffs)
                         fact = f"base_min({emit_node(u)},{emit_node(v)},{Dmin})."
@@ -231,6 +231,7 @@ def parse_clingo_output(stdout: str):
     bidirected_pairs = set()
     bidirected_zero = set()
     bidirected_diff = {}
+    base_min = {}
     def norm(x):
         x = x.strip()
         if x.isdigit():
@@ -288,12 +289,27 @@ def parse_clingo_output(stdout: str):
             elif atom.startswith("loop("):
                 inner = atom[len("loop("):-1]
                 u, v, d = smart_split_args(inner)
-                if u == v:  # only true self-loops matter here
-                    key = (norm(u), norm(v))
+                nu = norm(u)
+                nv = norm(v)
+
+                # Only treat self-loops on *latent* nodes as directed loops.
+                # Observed nodes are plain ints (5, 8, ...), latents are strings like "h0(5,8)", "p(5,8,2,1)".
+                if nu == nv and not isinstance(nu, int):
+                    key = (nu, nv)
                     directed.setdefault(key, set()).add(int(d))
                     print(f"[DEBUG parse] captured latent self-loop {u}->{v} lag={d}")
+                else:
+                    # For observed nodes (nu is int) we ignore loop/3 when building the set-graph.
+                    # The loop info is only for reverse's internal PathTree structure, not a real dir self-edge.
+                    print(f"[DEBUG parse] ignoring observed self-loop loop({u},{v},{d}) for directed graph")
 
-    return directed, directed_pairs, bidirected_pairs, bidirected_zero, bidirected_diff
+            elif atom.startswith("base_min_final("):
+                inner = atom[len("base_min_final("):-1]
+                u, v, d = smart_split_args(inner)
+                key = (norm(u), norm(v))
+                base_min[key] = int(d)
+
+    return directed, directed_pairs, bidirected_pairs, bidirected_zero, bidirected_diff, base_min
 
 def dump_for_clingo(graph, observed, base_min=None, return_str=False, filename=None): 
     """
@@ -526,3 +542,68 @@ def build_set_graph(directed, directed_pairs, bidirected_pairs, bidirected_zero,
 
     print(f"[DEBUG build_set_graph] Final G keys={list(G.keys())}")
     return G
+
+def add_target_lag_facts(directed, bidirected_diff, observed):
+    lines = []
+    # directed lagsets from first hide_nodes run
+    for (u, v), lags in directed.items():
+        if u in observed and v in observed:
+            for L in sorted(lags):
+                lines.append(f"target_dir({u},{v},{L}).")
+
+    # bidirected lagsets
+    for (u, v), diffs in bidirected_diff.items():
+        if u in observed and v in observed:
+            for D in sorted(diffs):
+                lines.append(f"target_bi({u},{v},{D}).")
+
+    return "\n".join(lines)
+
+def _split_top_level_comma(s: str) -> tuple[str, str]:
+    depth = 0
+    for i, ch in enumerate(s):
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth -= 1
+        elif ch == "," and depth == 0:
+            left = s[:i].strip()
+            right = s[i+1:].strip()
+            return left, right
+    raise ValueError(f"No top-level comma found in: {s!r}")
+
+
+def parse_edge2_atoms(clingo_out: str):
+    """
+    Parse edge/2 atoms from clingo output, supporting function terms like aux(1).
+    Returns list of (u, v) where u,v are ints if purely numeric, else strings.
+    """
+    edges = []
+
+    # Find the Answer line(s) and parse tokens from them.
+    # This is simple and works with your current outputs.
+    for line in clingo_out.splitlines():
+        line = line.strip()
+        if not line or line.startswith("Answer:") or line.startswith("Optimization:"):
+            continue
+        # Heuristic: lines containing atoms have "edge(" tokens
+        if "edge(" not in line:
+            continue
+
+        tokens = line.split()
+        for tok in tokens:
+            if not tok.startswith("edge("):
+                continue
+            if not tok.endswith(")"):
+                # sometimes clingo prints atoms without trailing ".", but should end with ")"
+                # if you have "edge(...)." then strip the final "."
+                tok = tok.rstrip(".")
+            inner = tok[len("edge("):-1]  # remove "edge(" and trailing ")"
+            u_raw, v_raw = _split_top_level_comma(inner)
+
+            def cast(x: str):
+                return int(x) if x.isdigit() else x
+
+            edges.append((cast(u_raw), cast(v_raw)))
+
+    return edges

@@ -1,1 +1,0 @@
-# PathTree tests

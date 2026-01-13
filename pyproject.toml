@@ -8,6 +8,8 @@ license = {text = "MIT"}
 
 dependencies = [
     "numpy>=1.24.0",
+    "sympy>=1.14.0",
+    "z3-solver>=4.15.4.0",
 ]
 
 [project.optional-dependencies]

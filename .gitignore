@@ -64,3 +64,4 @@ shipfig_figure.tex
 # my local files
 *.zkl
 [0-9]*.txt
+input.lp

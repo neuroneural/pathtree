@@ -183,7 +183,7 @@ def export_to_facts(G_true, hidden):
     return "\n".join(facts)
 
 
-def run_clingo(fact_str, maxlag=20, solver_path="clingo", solver_file="hide_nodes.lp"):
+def run_clingo(fact_str, maxlag=20, solver_path="clingo", solver_file="hide_nodes.lp", verbose=False):
     with open("input.lp", "w") as f:
         f.write(fact_str)
     result = subprocess.run(
@@ -191,8 +191,10 @@ def run_clingo(fact_str, maxlag=20, solver_path="clingo", solver_file="hide_node
         capture_output=True, text=True
     )
 
-    print("STDOUT:\n", result.stdout)
-    print("STDERR:\n", result.stderr)
+    if verbose:
+        print("STDOUT:\n", result.stdout)
+        if result.stderr.strip():
+            print("STDERR:\n", result.stderr)
 
     if result.returncode not in (0, 10, 30):
         raise RuntimeError(f"Clingo process failed with code {result.returncode}")

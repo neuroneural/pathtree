@@ -49,7 +49,7 @@ def hide_nodes(graph, hidden, maxlag=17, solver_file=None, verbose=False, force_
     if verbose:
         print(fact_str)
 
-    output = run_clingo(fact_str, maxlag=maxlag, solver_file=solver_file)
+    output = run_clingo(fact_str, maxlag=maxlag, solver_file=solver_file, verbose=verbose)
     if not output.strip():
         raise RuntimeError("hide_nodes.lp returned UNSAT for this input graph")
 
@@ -67,32 +67,6 @@ def edge2_to_graph(edges):
     return G
 
 
-def dir_unique_to_graph(clingo_output):
-    """
-    Parse dir_unique(u,v,lag) atoms from clingo output and build a graph.
-    Each dir_unique edge becomes a unit-lag edge (lag=1) for the second forward pass.
-    """
-    from parse import smart_split_args
-
-    G = {}
-
-    for line in clingo_output.splitlines():
-        if not line.strip() or line.startswith("Answer") or line.startswith("SAT"):
-            continue
-
-        for atom in line.split():
-            if atom.startswith("dir_unique("):
-                inner = atom[len("dir_unique("):-1]
-                parts = smart_split_args(inner)
-                if len(parts) == 3:
-                    u, v, lag = parts
-                    # Normalize: keep strings for latents, ints for observed
-                    u = int(u) if u.isdigit() else u
-                    v = int(v) if v.isdigit() else v
-                    # Add as unit-lag edge
-                    G.setdefault(u, {}).setdefault(v, {}).setdefault(1, set()).add(1)
-
-    return G
 
 
 def flatten_graph(G):
@@ -161,10 +135,13 @@ def run_pipeline_roundtrip(graph, hidden, maxlag=17, verbose=False):
         print(fact_str)
 
     # Step 4: Reverse pass
-    output = run_clingo(fact_str, maxlag=maxlag, solver_file=REVERSE_LP)
+    # Step 4: Reverse pass
+    output = run_clingo(fact_str, maxlag=maxlag, solver_file=REVERSE_LP, verbose=verbose)
 
-    # Parse dir_unique atoms from reverse output to build latent graph
-    G_cl = dir_unique_to_graph(output)
+    # Notebook behavior: parse edge/2 atoms, then build graph
+    edges = parse_edge2_atoms(output)
+    G_cl = edge2_to_graph(edges)
+
 
     # Compute all nodes in reversed graph
     all_nodes = set(G_cl.keys())

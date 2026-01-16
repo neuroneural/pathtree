@@ -48,31 +48,6 @@ maxlagp(U,V,B) :- B = #max { L : target_dir(U,V,L) } , has_pair(U,V).
 % Count how many lags are in the target for (U,V)
 ctlag(U,V,N) :- N = #count { L : target_dir(U,V,L) }, has_pair(U,V).
 
-% "looks_consecutive" is a cheap necessary condition:
-% at least 3 lags, and includes min and min+1, and includes max
-looks_consecutive(U,V) :-
-    observed(U), observed(V), U != V,
-    ctlag(U,V,N), N >= 3,
-    minlag(U,V,A),
-    target_dir(U,V,A),
-    A1 = A + 1,
-    target_dir(U,V,A1),
-    maxlagp(U,V,B),
-    target_dir(U,V,B).
-
-% ------------------------------------------------------------
-% Motif forcing: two hidden nodes forming a 2-cycle, plus U->both, H0->V.
-% This mirrors the successful reverse_z3 construction for consecutive lags.
-% We use aux(1) and aux(2) as the motif latents.
-%
-% If you do not want this heuristic, comment out this block.
-% ------------------------------------------------------------
-edge(U,aux(1)) :- looks_consecutive(U,V).
-edge(U,aux(2)) :- looks_consecutive(U,V).
-edge(aux(1),aux(2)) :- looks_consecutive(U,V).
-edge(aux(2),aux(1)) :- looks_consecutive(U,V).
-edge(aux(1),V) :- looks_consecutive(U,V).
-
 % ------------------------------------------------------------
 % Candidate edge generation space.
 % We keep it structured:

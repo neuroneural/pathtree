@@ -48,8 +48,12 @@ def hide_nodes(graph, hidden, maxlag=17, solver_file=None, verbose=False, force_
     fact_str = export_to_facts(G_true, hidden)
     if verbose:
         print(fact_str)
+    with open("fact_str_hide_nodes.lp", "w") as f:
+        f.write(fact_str)
 
     output = run_clingo(fact_str, maxlag=maxlag, solver_file=solver_file, verbose=verbose)
+    with open("output_hide_nodes.lp", "w") as f:
+        f.write(output)
     if not output.strip():
         raise RuntimeError("hide_nodes.lp returned UNSAT for this input graph")
 
@@ -65,8 +69,6 @@ def edge2_to_graph(edges):
     for u, v in edges:
         G.setdefault(u, {}).setdefault(v, {}).setdefault(1, set()).add(1)
     return G
-
-
 
 
 def flatten_graph(G):
@@ -95,6 +97,32 @@ def diff_graphs(g1, g2):
             lines.append(f"  actual:   {sorted(b.get(k, set()))}")
 
     return "\n".join(lines) if lines else "Graphs are equal"
+def build_reverse_targets_only(observed, directed_first, bidirected_diff_first, maxlag):
+    lines = [f"#const maxlag={maxlag}."]
+    for x in sorted(observed):
+        lines.append(f"observed({x}).")
+
+    # directed targets
+    # Case A: directed_first is a set/list of (x,y,L)
+    if isinstance(directed_first, (set, list, tuple)):
+        for x, y, L in sorted(directed_first):
+            lines.append(f"target_dir({x},{y},{L}).")
+    else:
+        # Case B: directed_first is dict-like: (x,y)->set(L)
+        for (x, y), lags in directed_first.items():
+            for L in sorted(lags):
+                lines.append(f"target_dir({x},{y},{L}).")
+
+    # bidirected targets (diffs)
+    if isinstance(bidirected_diff_first, (set, list, tuple)):
+        for x, y, D in sorted(bidirected_diff_first):
+            lines.append(f"target_bi({x},{y},{D}).")
+    else:
+        for (x, y), diffs in bidirected_diff_first.items():
+            for D in sorted(diffs):
+                lines.append(f"target_bi({x},{y},{D}).")
+
+    return "\n".join(lines) + "\n"
 
 
 def run_pipeline_roundtrip(graph, hidden, maxlag=17, verbose=False):
@@ -113,11 +141,30 @@ def run_pipeline_roundtrip(graph, hidden, maxlag=17, verbose=False):
 
     directed_first, directed_pairs_first, bidirected_pairs_first, \
         bidirected_zero_first, bidirected_diff_first, base_min_first = parsed_first
+    if verbose:
+        print("TYPE directed_first:", type(directed_first))
+        try:
+            print("SAMPLE directed_first:", list(directed_first)[:5])
+        except TypeError:
+            # not directly iterable like a list/set
+            try:
+                print("SAMPLE directed_first items:", list(directed_first.items())[:5])
+            except Exception as e:
+                print("Could not sample directed_first:", e)
+
+        print("TYPE bidirected_diff_first:", type(bidirected_diff_first))
+        try:
+            print("SAMPLE bidirected_diff_first:", list(bidirected_diff_first)[:5])
+        except TypeError:
+            try:
+                print("SAMPLE bidirected_diff_first items:", list(bidirected_diff_first.items())[:5])
+            except Exception as e:
+                print("Could not sample bidirected_diff_first:", e)
 
     # Step 2: PathTree unification + refinement
-    G_for = unify_edge_representation(deepcopy(G_set))
-    bcliques = find_maximal_bcliques(G_for)
-    G_refined = minimal_refinement(G_for, bcliques)
+    # G_for = unify_edge_representation(deepcopy(G_set))
+    # bcliques = find_maximal_bcliques(G_for)
+    # G_refined = minimal_refinement(G_for, bcliques)
 
     # Compute observed nodes
     observed = set(graph.keys())
@@ -126,18 +173,25 @@ def run_pipeline_roundtrip(graph, hidden, maxlag=17, verbose=False):
     observed -= set(hidden)
 
     # Step 3: Build facts for reverse search
-    pf_facts = dump_for_clingo(G_refined, observed, return_str=True)
-    target_block = add_target_lag_facts(directed_first, bidirected_diff_first, observed)
-    fact_str = pf_facts + "\n" + target_block + "\n"
+    # pf_facts = dump_for_clingo(G_refined, observed, return_str=True)
+    #target_block = add_target_lag_facts(directed_first, bidirected_diff_first, observed)
+    fact_str = build_reverse_targets_only(
+        observed=observed,
+        directed_first=directed_first,
+        bidirected_diff_first=bidirected_diff_first,
+        maxlag=maxlag,
+    )
 
     if verbose:
         print("==== FACTS SENT TO CLINGO (REVERSE SEARCH) ====")
         print(fact_str)
-
+    with open("fact_str.lp", "w") as f:
+        f.write(fact_str)
     # Step 4: Reverse pass
     # Step 4: Reverse pass
     output = run_clingo(fact_str, maxlag=maxlag, solver_file=REVERSE_LP, verbose=verbose)
-
+    with open("output.lp", "w") as f:
+        f.write(output)
     # Notebook behavior: parse edge/2 atoms, then build graph
     edges = parse_edge2_atoms(output)
     G_cl = edge2_to_graph(edges)
@@ -161,7 +215,7 @@ def run_pipeline_roundtrip(graph, hidden, maxlag=17, verbose=False):
 
     details = {
         'G_set': G_set,
-        'G_refined': G_refined,
+        #'G_refined': G_refined,
         'G_cl': G_cl,
         'G_fake_forward': G_fake_forward,
         'observed': observed,

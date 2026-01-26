@@ -7,7 +7,7 @@ OUT_DIR="ringmore_gsets"
 
 CORE="hide_nodes_program.lp"
 PRUNE_FWD="prune_forward.lp"
-OUT_FWD="output_directives.lp"   # better: output_forward.lp with only out_dir/out_bi
+OUT_FWD="output_directives.lp"
 
 mkdir -p "$OUT_DIR"
 

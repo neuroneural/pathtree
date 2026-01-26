@@ -14,7 +14,7 @@ OUT_REV="output_directives.lp"     # ok even if it shows out_dir/out_bi too
 # Optional forward check (set to 1 to enable)
 DO_FORWARD_CHECK=1
 PRUNE_FWD="prune_forward.lp"
-OUT_FWD="output_directives.lp"     # better: output_forward.lp with only out_dir/out_bi
+OUT_FWD="output_directives.lp"
 
 mkdir -p "$OUT_DIR"
 true_count=0

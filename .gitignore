@@ -1,3 +1,9 @@
+# ---- pathtree3 experiment artifacts ----
+/pathtree3/logFiles/
+/pathtree3/ringmore_gsets/
+/pathtree3/ringmore_inputs/
+/pathtree3/ringmore_reverse/
+/pathtree3/ringmore.sbatch
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
